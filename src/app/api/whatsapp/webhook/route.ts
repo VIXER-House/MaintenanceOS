@@ -12,6 +12,8 @@ import { handleInboundMessage } from "@/server/services/intake.service";
  *        checked when WHATSAPP_APP_SECRET is set). The simple mock payload
  *        ({ from, text, ... }) is accepted only outside production / in mock mode.
  */
+export const maxDuration = 60;
+
 export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams;
   if (p.get("hub.mode") === "subscribe" && p.get("hub.verify_token") === getConfig().WHATSAPP_VERIFY_TOKEN) {

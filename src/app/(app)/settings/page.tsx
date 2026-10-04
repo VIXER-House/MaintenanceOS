@@ -10,6 +10,7 @@ import { GLOBAL_PRIORITY_RULES } from "@/server/engines/priority/rules";
 import { APPROVAL_LIMITS } from "@/server/engines/quotation/quotation-engine";
 import type { PriorityRule } from "@/server/domain/categories";
 import { PageHeader } from "@/components/domain/page-header";
+import { AiTestCard, WebhookInfoCard } from "@/features/settings/integration-tools";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge } from "@/components/domain/badges";
@@ -40,6 +41,8 @@ export default async function SettingsPage() {
     <div>
       <PageHeader title={t.settings.title} subtitle={t.settings.subtitle} />
       <div className="grid gap-4 lg:grid-cols-2">
+        <AiTestCard />
+        <WebhookInfoCard verifyToken={cfg.WHATSAPP_VERIFY_TOKEN} provider={getWhatsAppProvider().name} />
         <Card>
           <CardHeader><CardTitle>{t.settings.providers}</CardTitle><CardDescription>.env — every integration is optional and falls back to a local mock.</CardDescription></CardHeader>
           <CardContent className="space-y-2">

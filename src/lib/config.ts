@@ -16,6 +16,8 @@ const ConfigSchema = z.object({
 
   AI_PROVIDER: z.enum(["mock", "ollama", "groq", "openrouter", "openai", "gemini"]).catch("mock").default("mock"),
   AI_API_KEY: z.string().optional(),
+  /** One Google AI Studio key for AI + vision + voice when those providers are "gemini" */
+  GEMINI_API_KEY: z.string().optional(),
   AI_MODEL: z.string().optional(),
   AI_BASE_URL: z.string().optional(),
   AI_TIMEOUT_MS: z.coerce.number().default(20000),
@@ -30,7 +32,7 @@ const ConfigSchema = z.object({
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_API_VERSION: z.string().default("v21.0"),
 
-  SPEECH_PROVIDER: z.enum(["mock", "whisper"]).catch("mock").default("mock"),
+  SPEECH_PROVIDER: z.enum(["mock", "whisper", "gemini"]).catch("mock").default("mock"),
   SPEECH_BASE_URL: z.string().optional(),
   SPEECH_API_KEY: z.string().optional(),
   SPEECH_MODEL: z.string().default("whisper-large-v3-turbo"),

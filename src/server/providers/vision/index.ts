@@ -151,7 +151,7 @@ export function getVisionProvider(): VisionProvider {
         : mock;
       break;
     case "gemini":
-      instance = c.VISION_API_KEY ? new GeminiVisionProvider(c.VISION_MODEL || "gemini-2.5-flash", c.VISION_API_KEY) : mock;
+      instance = c.VISION_API_KEY || c.GEMINI_API_KEY ? new GeminiVisionProvider(c.VISION_MODEL || "gemini-2.5-flash", (c.VISION_API_KEY || c.GEMINI_API_KEY)!) : mock;
       break;
     default:
       instance = mock;

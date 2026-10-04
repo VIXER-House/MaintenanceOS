@@ -8,7 +8,7 @@ export { MockAIProvider } from "./mock-ai.provider";
 
 const DEFAULT_MODELS: Record<string, string> = {
   ollama: "qwen2.5:7b",
-  groq: "llama-3.3-70b-versatile",
+  groq: "openai/gpt-oss-120b",
   openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   openai: "gpt-4o-mini",
   gemini: "gemini-2.5-flash",
@@ -44,7 +44,7 @@ export function getAIProvider(): AIProvider {
         : warnAndMock(`${c.AI_PROVIDER} selected but AI_API_KEY is empty`);
       break;
     case "gemini":
-      primary = c.AI_API_KEY ? new GeminiProvider(model, c.AI_API_KEY, opts) : warnAndMock("gemini selected but AI_API_KEY is empty");
+      primary = c.AI_API_KEY || c.GEMINI_API_KEY ? new GeminiProvider(model, (c.AI_API_KEY || c.GEMINI_API_KEY)!, opts) : warnAndMock("gemini selected but AI_API_KEY / GEMINI_API_KEY is empty");
       break;
     default:
       primary = fallback;

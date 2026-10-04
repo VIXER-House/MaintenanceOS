@@ -84,13 +84,49 @@ export class WhisperProvider implements SpeechToTextProvider {
   }
 }
 
+/** Google Gemini transcribes audio natively (free tier via Google AI Studio). */
+export class GeminiSpeechProvider implements SpeechToTextProvider {
+  readonly name = "gemini";
+  constructor(
+    private readonly model: string,
+    private readonly apiKey: string,
+  ) {}
+
+  async transcribe(file: AudioInput): Promise<TranscriptionResult> {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
+    const res = await fetchJson<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(url, {
+      method: "POST",
+      timeoutMs: 60000,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { text: "Transcribe this WhatsApp voice note exactly as spoken (Egyptian Arabic, Arabic or English). Output only the transcript, no commentary." },
+              { inline_data: { mime_type: file.mimeType.split(";")[0] || "audio/ogg", data: file.buffer.toString("base64") } },
+            ],
+          },
+        ],
+        generationConfig: { temperature: 0 },
+      }),
+    });
+    const text = res.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim();
+    if (!text) throw new Error("gemini: empty transcription");
+    return { text, provider: this.name };
+  }
+}
+
 let instance: SpeechToTextProvider | null = null;
 const mock = new MockSpeechProvider();
 
 export function getSpeechProvider(): SpeechToTextProvider {
   if (instance) return instance;
   const c = getConfig();
-  if (c.SPEECH_PROVIDER === "whisper" && c.SPEECH_BASE_URL) {
+  const geminiKey = c.SPEECH_API_KEY || c.GEMINI_API_KEY;
+  if (c.SPEECH_PROVIDER === "gemini" && geminiKey) {
+    instance = new GeminiSpeechProvider(c.SPEECH_MODEL.startsWith("gemini") ? c.SPEECH_MODEL : "gemini-2.5-flash", geminiKey);
+  } else if (c.SPEECH_PROVIDER === "whisper" && c.SPEECH_BASE_URL) {
     instance = new WhisperProvider(c.SPEECH_BASE_URL, c.SPEECH_MODEL, c.SPEECH_API_KEY);
   } else {
     instance = mock;
