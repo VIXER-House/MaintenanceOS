@@ -1,0 +1,682 @@
+// MaintenanceOS — relational schema
+// PostgreSQL + Prisma. Money is stored as Decimal(12,2) in EGP.
+
+generator client {
+  provider        = "prisma-client-js"
+  // Rust-free Prisma Client: TypeScript query compiler + the `pg` driver adapter.
+  // No native query-engine binary is needed at runtime (this is the default in Prisma 7).
+  previewFeatures = ["driverAdapters", "queryCompiler"]
+  engineType      = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Enums ─────────────────────────
+
+/// Roles are an enum (not a table) for the MVP: they are fixed by the product and drive
+/// authorization in code. A Role table can be introduced later for custom permissions.
+enum Role {
+  ADMIN
+  COMPOUND_MANAGER
+  MAINTENANCE_MANAGER
+  TECHNICIAN
+  CONTRACTOR
+  RESIDENT
+}
+
+enum Priority {
+  EMERGENCY
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum TicketStatus {
+  NEW
+  AI_ANALYZING
+  WAITING_FOR_INFO
+  ASSIGNED
+  ACKNOWLEDGED
+  IN_PROGRESS
+  WAITING_QUOTATION
+  WAITING_APPROVAL
+  APPROVED
+  REJECTED
+  COMPLETED
+  CLOSED
+  CANCELLED
+}
+
+enum TicketSource {
+  WHATSAPP
+  WEB
+  PHONE
+  DEMO
+  SYSTEM
+}
+
+enum TicketEventType {
+  TICKET_CREATED
+  STATUS_CHANGED
+  AI_ANALYZING
+  AI_ANALYZED
+  AI_ANALYSIS_EDITED
+  INFO_REQUESTED
+  INFO_RECEIVED
+  PRIORITY_CHANGED
+  CATEGORY_CHANGED
+  SLA_SET
+  SLA_BREACHED
+  ASSIGNED
+  REASSIGNED
+  ACKNOWLEDGED
+  STARTED
+  QUOTATION_REQUESTED
+  QUOTATION_CREATED
+  QUOTATION_APPROVED
+  QUOTATION_REJECTED
+  QUOTATION_REVISION_REQUESTED
+  COMPLETED
+  RESIDENT_CONFIRMED
+  RESIDENT_DISPUTED
+  CLOSED
+  CANCELLED
+  REOPENED
+  ATTACHMENT_ADDED
+  MESSAGE_RECEIVED
+  MESSAGE_SENT
+  NOTE_ADDED
+  ASSET_HISTORY_UPDATED
+}
+
+enum ActorType {
+  RESIDENT
+  AI
+  STAFF
+  TECHNICIAN
+  CONTRACTOR
+  SYSTEM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum Channel {
+  WHATSAPP
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum MessageStatus {
+  RECEIVED
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ConversationState {
+  IDLE
+  AWAITING_INFO
+  AWAITING_CONFIRMATION
+}
+
+enum AttachmentType {
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+}
+
+enum TechnicianStatus {
+  AVAILABLE
+  BUSY
+  OFF_DUTY
+}
+
+enum AssetStatus {
+  OPERATIONAL
+  NEEDS_ATTENTION
+  UNDER_MAINTENANCE
+  OUT_OF_SERVICE
+  RETIRED
+}
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+  INSPECTION
+  EMERGENCY
+}
+
+enum QuotationStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REVISION_REQUESTED
+  SUPERSEDED
+}
+
+enum QuotationItemType {
+  LABOR
+  MATERIAL
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+// ───────────────────────── Identity ─────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  nameAr       String?
+  passwordHash String
+  role         Role
+  phone        String?
+  locale       String   @default("en")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  compoundId   String?
+  compound     Compound?  @relation(fields: [compoundId], references: [id])
+  technician   Technician?
+  resident     Resident?
+  contractorId String?
+  contractor   Contractor? @relation(fields: [contractorId], references: [id])
+
+  notifications Notification[]
+
+  @@index([role])
+}
+
+// ───────────────────────── Property ─────────────────────────
+
+model Compound {
+  id        String   @id @default(cuid())
+  name      String
+  nameAr    String?
+  city      String
+  address   String?
+  createdAt DateTime @default(now())
+
+  buildings  Building[]
+  tickets    Ticket[]
+  assets     Asset[]
+  teams      Team[]
+  users      User[]
+}
+
+model Building {
+  id         String   @id @default(cuid())
+  compoundId String
+  compound   Compound @relation(fields: [compoundId], references: [id], onDelete: Cascade)
+  code       String
+  name       String?
+  floors     Int      @default(5)
+
+  units  Unit[]
+  assets Asset[]
+
+  @@unique([compoundId, code])
+}
+
+model Unit {
+  id         String   @id @default(cuid())
+  buildingId String
+  building   Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  code       String   @unique
+  floor      Int
+  type       String   @default("Apartment")
+  areaSqm    Int?
+
+  residents Resident[]
+  tickets   Ticket[]
+  assets    Asset[]
+
+  @@index([buildingId])
+}
+
+model Resident {
+  id        String   @id @default(cuid())
+  userId    String?  @unique
+  user      User?    @relation(fields: [userId], references: [id])
+  unitId    String
+  unit      Unit     @relation(fields: [unitId], references: [id])
+  name      String
+  nameAr    String?
+  /// E.164 phone number — used as the WhatsApp identity.
+  phone     String   @unique
+  email     String?
+  language  String   @default("ar")
+  isOwner   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tickets       Ticket[]
+  conversations Conversation[]
+
+  @@index([unitId])
+}
+
+// ───────────────────────── Configuration ─────────────────────────
+
+model Category {
+  id                       String   @id @default(cuid())
+  /// Stable machine key, e.g. PLUMBING, HVAC
+  key                      String   @unique
+  nameEn                   String
+  nameAr                   String
+  description              String
+  /// Default resolution target (minutes) for this category. The stricter of this and the priority policy wins.
+  defaultResolutionMinutes Int
+  /// Skill required from a technician (matches Technician.skills)
+  requiredSkill            String
+  defaultPriority          Priority @default(MEDIUM)
+  /// Configurable keyword → priority rules: [{ "keywords": ["..."], "priority": "EMERGENCY", "reason": "..." }]
+  priorityRules            Json     @default("[]")
+  /// Tickets in this category whose expected cost exceeds this value need a quotation.
+  quotationThreshold       Decimal  @default(1500) @db.Decimal(12, 2)
+  icon                     String?
+  sortOrder                Int      @default(0)
+
+  tickets     Ticket[]
+  teams       Team[]
+  contractors Contractor[]
+  assets      Asset[]
+}
+
+/// SLA policy per priority ("SLA" entity).
+model SlaPolicy {
+  id                String   @id @default(cuid())
+  priority          Priority @unique
+  /// Time allowed to acknowledge / dispatch (minutes)
+  responseMinutes   Int
+  /// Time allowed to resolve (minutes)
+  resolutionMinutes Int
+  description       String?
+  updatedAt         DateTime @updatedAt
+
+  @@map("SLA")
+}
+
+// ───────────────────────── Workforce ─────────────────────────
+
+model Team {
+  id         String    @id @default(cuid())
+  name       String
+  nameAr     String?
+  compoundId String
+  compound   Compound  @relation(fields: [compoundId], references: [id])
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+
+  technicians Technician[]
+  tickets     Ticket[]
+}
+
+model Technician {
+  id            String           @id @default(cuid())
+  userId        String           @unique
+  user          User             @relation(fields: [userId], references: [id])
+  teamId        String?
+  team          Team?            @relation(fields: [teamId], references: [id])
+  name          String
+  nameAr        String?
+  phone         String
+  /// Category keys this technician is qualified for (e.g. ["PLUMBING"]); "GENERAL" = handyman.
+  skills        String[]
+  status        TechnicianStatus @default(AVAILABLE)
+  maxConcurrent Int              @default(5)
+  rating        Float            @default(4.5)
+  createdAt     DateTime         @default(now())
+
+  tickets Ticket[]
+
+  @@index([status])
+}
+
+model Contractor {
+  id                   String    @id @default(cuid())
+  name                 String
+  nameAr               String?
+  categoryId           String?
+  category             Category? @relation(fields: [categoryId], references: [id])
+  phone                String
+  email                String?
+  rating               Float     @default(4.0)
+  isActive             Boolean   @default(true)
+  /// Cached metrics, recomputed from ticket history whenever a contractor job completes.
+  avgResponseMinutes   Int       @default(0)
+  avgResolutionMinutes Int       @default(0)
+  completedJobs        Int       @default(0)
+  totalCost            Decimal   @default(0) @db.Decimal(12, 2)
+  createdAt            DateTime  @default(now())
+
+  tickets    Ticket[]
+  quotations Quotation[]
+  users      User[]
+}
+
+// ───────────────────────── Tickets ─────────────────────────
+
+model Ticket {
+  id           String       @id @default(cuid())
+  number       Int          @unique @default(autoincrement())
+  ticketNumber String       @unique
+  compoundId   String
+  compound     Compound     @relation(fields: [compoundId], references: [id])
+  residentId   String?
+  resident     Resident?    @relation(fields: [residentId], references: [id])
+  unitId       String?
+  unit         Unit?        @relation(fields: [unitId], references: [id])
+
+  title        String
+  description  String
+  location     String?
+  categoryId   String?
+  category     Category?    @relation(fields: [categoryId], references: [id])
+  priority     Priority     @default(MEDIUM)
+  status       TicketStatus @default(NEW)
+  source       TicketSource @default(WHATSAPP)
+
+  assetId      String?
+  asset        Asset?       @relation(fields: [assetId], references: [id])
+  teamId       String?
+  team         Team?        @relation(fields: [teamId], references: [id])
+  technicianId String?
+  technician   Technician?  @relation(fields: [technicianId], references: [id])
+  contractorId String?
+  contractor   Contractor?  @relation(fields: [contractorId], references: [id])
+  /// Contractor suggested by the system — needs manager confirmation (human-in-the-loop)
+  suggestedContractorId String?
+
+  // AI vs. final decisions (human-in-the-loop)
+  aiSuggestedPriority Priority?
+  priorityOverridden  Boolean   @default(false)
+  requiresQuotation   Boolean   @default(false)
+
+  // SLA
+  slaResponseDueAt      DateTime?
+  slaResolutionDueAt    DateTime?
+  slaResponseBreached   Boolean   @default(false)
+  slaResolutionBreached Boolean   @default(false)
+
+  // Lifecycle timestamps
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  assignedAt     DateTime?
+  acknowledgedAt DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  closedAt       DateTime?
+  cancelledAt    DateTime?
+  residentConfirmedAt DateTime?
+  residentRating Int?
+
+  // Cost (EGP)
+  estimatedCost Decimal? @db.Decimal(12, 2)
+  approvedCost  Decimal? @db.Decimal(12, 2)
+  finalCost     Decimal? @db.Decimal(12, 2)
+
+  resolutionNotes String?
+  isDemo          Boolean @default(false)
+
+  messages      TicketMessage[]
+  attachments   TicketAttachment[]
+  events        TicketEvent[]
+  quotations    Quotation[]
+  aiAnalyses    AIAnalysis[]
+  notifications Notification[]
+  assetHistory  AssetMaintenance[]
+  activeInConversations Conversation[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([categoryId])
+  @@index([technicianId])
+  @@index([contractorId])
+  @@index([residentId])
+  @@index([createdAt])
+  @@index([slaResolutionDueAt])
+}
+
+/// One WhatsApp thread per resident phone. Holds the intake state machine.
+model Conversation {
+  id             String            @id @default(cuid())
+  residentId     String
+  resident       Resident          @relation(fields: [residentId], references: [id])
+  channel        Channel           @default(WHATSAPP)
+  phone          String
+  state          ConversationState @default(IDLE)
+  activeTicketId String?
+  activeTicket   Ticket?           @relation(fields: [activeTicketId], references: [id])
+  /// Free-form state: pending question, number of questions asked, etc.
+  context        Json              @default("{}")
+  lastMessageAt  DateTime          @default(now())
+  createdAt      DateTime          @default(now())
+
+  messages TicketMessage[]
+
+  @@unique([residentId, channel])
+}
+
+model TicketMessage {
+  id                String           @id @default(cuid())
+  conversationId    String?
+  conversation      Conversation?    @relation(fields: [conversationId], references: [id])
+  ticketId          String?
+  ticket            Ticket?          @relation(fields: [ticketId], references: [id])
+  direction         MessageDirection
+  channel           Channel          @default(WHATSAPP)
+  senderType        ActorType
+  senderName        String?
+  body              String
+  mediaType         AttachmentType?
+  mediaUrl          String?
+  transcript        String?
+  provider          String?
+  providerMessageId String?
+  status            MessageStatus    @default(SENT)
+  error             String?
+  createdAt         DateTime         @default(now())
+
+  attachments TicketAttachment[]
+  aiAnalyses  AIAnalysis[]
+
+  @@index([conversationId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+model TicketAttachment {
+  id         String         @id @default(cuid())
+  ticketId   String?
+  ticket     Ticket?        @relation(fields: [ticketId], references: [id])
+  messageId  String?
+  message    TicketMessage? @relation(fields: [messageId], references: [id])
+  type       AttachmentType
+  url        String
+  fileName   String
+  mimeType   String
+  size       Int
+  /// Vision analysis / transcription result
+  analysis   Json?
+  createdAt  DateTime       @default(now())
+
+  @@index([ticketId])
+}
+
+model TicketEvent {
+  id        String          @id @default(cuid())
+  ticketId  String
+  ticket    Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type      TicketEventType
+  actorType ActorType
+  actorId   String?
+  actorName String?
+  message   String
+  data      Json?
+  createdAt DateTime        @default(now())
+
+  @@index([ticketId, createdAt])
+  @@index([type])
+}
+
+model AIAnalysis {
+  id                String         @id @default(cuid())
+  ticketId          String?
+  ticket            Ticket?        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  messageId         String?
+  message           TicketMessage? @relation(fields: [messageId], references: [id])
+  provider          String
+  model             String?
+  input             String
+  language          String?
+  categoryKey       String?
+  priority          Priority?
+  issue             String?
+  location          String?
+  assetHint         String?
+  confidence        Float
+  recommendedAction String?
+  reasoning         String?
+  entities          Json?
+  needsMoreInfo     Boolean        @default(false)
+  followUpQuestion  String?
+  rawResponse       Json?
+  latencyMs         Int?
+  fallbackUsed      Boolean        @default(false)
+  /// Set when a manager edits the AI's extraction (human-in-the-loop)
+  editedById        String?
+  editedAt          DateTime?
+  createdAt         DateTime       @default(now())
+
+  @@index([ticketId])
+}
+
+// ───────────────────────── Assets ─────────────────────────
+
+model Asset {
+  id               String      @id @default(cuid())
+  assetCode        String      @unique
+  name             String
+  nameAr           String?
+  type             String
+  compoundId       String
+  compound         Compound    @relation(fields: [compoundId], references: [id])
+  buildingId       String?
+  building         Building?   @relation(fields: [buildingId], references: [id])
+  unitId           String?
+  unit             Unit?       @relation(fields: [unitId], references: [id])
+  categoryId       String?
+  category         Category?   @relation(fields: [categoryId], references: [id])
+  location         String
+  installationDate DateTime?
+  manufacturer     String?
+  model            String?
+  serialNumber     String?
+  warrantyExpiry   DateTime?
+  status           AssetStatus @default(OPERATIONAL)
+  createdAt        DateTime    @default(now())
+
+  tickets Ticket[]
+  history AssetMaintenance[]
+
+  @@index([unitId])
+  @@index([type])
+}
+
+model AssetMaintenance {
+  id          String          @id @default(cuid())
+  assetId     String
+  asset       Asset           @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  ticketId    String?
+  ticket      Ticket?         @relation(fields: [ticketId], references: [id])
+  date        DateTime
+  type        MaintenanceType
+  description String
+  cost        Decimal?        @db.Decimal(12, 2)
+  performedBy String?
+  createdAt   DateTime        @default(now())
+
+  @@index([assetId, date])
+}
+
+// ───────────────────────── Quotations ─────────────────────────
+
+model Quotation {
+  id                    String          @id @default(cuid())
+  ticketId              String
+  ticket                Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  number                String          @unique
+  version               Int             @default(1)
+  status                QuotationStatus @default(SUBMITTED)
+  contractorId          String?
+  contractor            Contractor?     @relation(fields: [contractorId], references: [id])
+  createdById           String?
+  createdByName         String?
+  laborCost             Decimal         @db.Decimal(12, 2)
+  materialsCost         Decimal         @db.Decimal(12, 2)
+  subtotal              Decimal         @db.Decimal(12, 2)
+  vatRate               Decimal         @default(0.14) @db.Decimal(5, 4)
+  vatAmount             Decimal         @db.Decimal(12, 2)
+  total                 Decimal         @db.Decimal(12, 2)
+  estimatedHours        Float?
+  estimatedCompletionAt DateTime?
+  notes                 String?
+  reviewedById          String?
+  reviewedByName        String?
+  reviewedAt            DateTime?
+  reviewNotes           String?
+  createdAt             DateTime        @default(now())
+
+  items QuotationItem[]
+
+  @@index([ticketId])
+  @@index([status])
+}
+
+model QuotationItem {
+  id          String            @id @default(cuid())
+  quotationId String
+  quotation   Quotation         @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  type        QuotationItemType
+  description String
+  quantity    Float             @default(1)
+  unitPrice   Decimal           @db.Decimal(12, 2)
+  total       Decimal           @db.Decimal(12, 2)
+}
+
+// ───────────────────────── Notifications ─────────────────────────
+
+model Notification {
+  id        String             @id @default(cuid())
+  userId    String?
+  user      User?              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Role broadcast (e.g. all MAINTENANCE_MANAGERs) when no single user is targeted
+  role      Role?
+  channel   Channel            @default(IN_APP)
+  provider  String             @default("mock")
+  title     String
+  body      String
+  link      String?
+  ticketId  String?
+  ticket    Ticket?            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  status    NotificationStatus @default(SENT)
+  readAt    DateTime?
+  createdAt DateTime           @default(now())
+
+  @@index([userId, readAt])
+  @@index([role, createdAt])
+}

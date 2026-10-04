@@ -1,0 +1,31 @@
+# Render Blueprint — one-click deploy of MaintenanceOS (web service + free PostgreSQL)
+# Render dashboard → New → Blueprint → select this repo.
+databases:
+  - name: maintenanceos-db
+    plan: free
+    databaseName: maintenanceos
+    user: maintenanceos
+
+services:
+  - type: web
+    name: maintenanceos
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    startCommand: pnpm start:hosted
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: DATABASE_URL
+        fromDatabase:
+          name: maintenanceos-db
+          property: connectionString
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AI_PROVIDER
+        value: mock
+      - key: WHATSAPP_PROVIDER
+        value: mock
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=460
