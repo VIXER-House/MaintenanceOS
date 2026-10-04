@@ -9,6 +9,8 @@ import { getConfig } from "@/lib/config";
  * Production: replace with S3/R2/Azure Blob behind the same two functions.
  */
 function root() {
+  // Serverless hosts (Vercel) only allow writes under /tmp
+  if (process.env.VERCEL && !process.env.UPLOAD_DIR) return "/tmp/uploads";
   return path.resolve(process.cwd(), getConfig().UPLOAD_DIR);
 }
 

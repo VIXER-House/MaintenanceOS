@@ -20,7 +20,8 @@
     "postinstall": "prisma generate",
     "db:setup": "prisma migrate deploy && prisma db seed",
     "test:unit": "vitest run tests/unit",
-    "start:hosted": "prisma migrate deploy && SEED_IF_EMPTY=1 tsx prisma/seed.ts && next start"
+    "start:hosted": "prisma migrate deploy && SEED_IF_EMPTY=1 tsx prisma/seed.ts && next start",
+    "vercel-build": "prisma generate && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" prisma migrate deploy && DATABASE_URL=\"${DATABASE_URL_UNPOOLED:-$DATABASE_URL}\" SEED_IF_EMPTY=1 tsx prisma/seed.ts && next build"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
