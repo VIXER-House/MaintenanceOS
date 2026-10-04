@@ -122,7 +122,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   const imageFindings: ImageAnalysis[] = [];
   let transcript: string | null = null;
   if (msg.media) {
-    const provider = providerName === "meta" ? getWhatsAppProvider() : getMockWhatsAppProvider();
+    const provider = providerName !== "mock" ? getWhatsAppProvider() : getMockWhatsAppProvider();
     let buffer: Buffer | null = null;
     try {
       buffer = await provider.downloadMedia(msg.media);

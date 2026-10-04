@@ -75,21 +75,25 @@ export function AiTestCard() {
 export function WebhookInfoCard({ verifyToken, provider }: { verifyToken: string; provider: string }) {
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
-  const url = `${origin}/api/whatsapp/webhook`;
+  const twilio = provider === "twilio";
+  const url = `${origin}/api/whatsapp/${twilio ? "twilio" : "webhook"}`;
   const copy = (v: string) => navigator.clipboard.writeText(v).then(() => toast.success("Copied"));
+  const rows = twilio ? [["“When a message comes in” URL (method POST)", url]] : [["Callback URL", url], ["Verify token", verifyToken]];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>WhatsApp webhook (Meta)</CardTitle>
+        <CardTitle>WhatsApp webhook ({twilio ? "Twilio Sandbox" : "Meta"})</CardTitle>
         <CardDescription>
-          Paste these into Meta → WhatsApp → Configuration → Webhook, then subscribe to <b>messages</b>. Current provider: <b>{provider}</b>
+          {twilio ? (
+            <>Paste into Twilio Console → Messaging → Try it out → Send a WhatsApp message → <b>Sandbox settings</b>.</>
+          ) : (
+            <>Paste these into Meta → WhatsApp → Configuration → Webhook, then subscribe to <b>messages</b>.</>
+          )}{" "}
+          Current provider: <b>{provider}</b>
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
-        {[
-          ["Callback URL", url],
-          ["Verify token", verifyToken],
-        ].map(([k, v]) => (
+        {rows.map(([k, v]) => (
           <div key={k}>
             <div className="mb-1 text-xs text-muted-foreground">{k}</div>
             <div className="flex gap-2">

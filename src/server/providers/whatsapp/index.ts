@@ -1,6 +1,7 @@
 import { getConfig } from "@/lib/config";
 import { MetaWhatsAppProvider } from "./meta.provider";
 import { MockWhatsAppProvider } from "./mock.provider";
+import { TwilioWhatsAppProvider } from "./twilio.provider";
 import type { WhatsAppProvider } from "./types";
 
 export * from "./types";
@@ -11,7 +12,9 @@ const mock = new MockWhatsAppProvider();
 export function getWhatsAppProvider(): WhatsAppProvider {
   if (instance) return instance;
   const c = getConfig();
-  if (c.WHATSAPP_PROVIDER === "meta" && c.WHATSAPP_TOKEN && c.WHATSAPP_PHONE_NUMBER_ID) {
+  if (c.WHATSAPP_PROVIDER === "twilio" && c.TWILIO_ACCOUNT_SID && c.TWILIO_AUTH_TOKEN) {
+    instance = new TwilioWhatsAppProvider({ accountSid: c.TWILIO_ACCOUNT_SID, authToken: c.TWILIO_AUTH_TOKEN, from: c.TWILIO_WHATSAPP_FROM });
+  } else if (c.WHATSAPP_PROVIDER === "meta" && c.WHATSAPP_TOKEN && c.WHATSAPP_PHONE_NUMBER_ID) {
     instance = new MetaWhatsAppProvider({
       token: c.WHATSAPP_TOKEN,
       phoneNumberId: c.WHATSAPP_PHONE_NUMBER_ID,
@@ -19,7 +22,7 @@ export function getWhatsAppProvider(): WhatsAppProvider {
       appSecret: c.WHATSAPP_APP_SECRET,
     });
   } else {
-    if (c.WHATSAPP_PROVIDER === "meta") console.warn("[whatsapp] meta selected but WHATSAPP_TOKEN/PHONE_NUMBER_ID missing — using mock");
+    if (c.WHATSAPP_PROVIDER !== "mock") console.warn(`[whatsapp] ${c.WHATSAPP_PROVIDER} selected but credentials missing — using mock`);
     instance = mock;
   }
   return instance;

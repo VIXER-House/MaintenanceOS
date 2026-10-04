@@ -47,7 +47,8 @@ export async function updateConversation(
 
 /** Residents who wrote via the simulator are answered by the mock provider; real numbers via the configured provider. */
 function providerFor(conversation: Conversation): WhatsAppProvider {
-  return ctx(conversation).provider === "meta" ? getWhatsAppProvider() : getMockWhatsAppProvider();
+  const p = ctx(conversation).provider;
+  return p && p !== "mock" && p === getWhatsAppProvider().name ? getWhatsAppProvider() : getMockWhatsAppProvider();
 }
 
 /**

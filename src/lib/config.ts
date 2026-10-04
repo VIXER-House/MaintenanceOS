@@ -25,7 +25,12 @@ const ConfigSchema = z.object({
   AI_GENERATE_REPLIES: bool,
   OLLAMA_BASE_URL: z.string().default("http://localhost:11434"),
 
-  WHATSAPP_PROVIDER: z.enum(["mock", "meta"]).catch("mock").default("mock"),
+  WHATSAPP_PROVIDER: z.enum(["mock", "meta", "twilio"]).catch("mock").default("mock"),
+  /** Twilio WhatsApp Sandbox (no Meta setup): Console → Messaging → Try it out → Send a WhatsApp message */
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
+  TWILIO_WHATSAPP_FROM: z.string().default("+14155238886"),
+  TWILIO_VALIDATE_SIGNATURE: bool,
   WHATSAPP_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().default("maintenanceos-verify"),

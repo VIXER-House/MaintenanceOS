@@ -266,6 +266,15 @@ Business logic is unchanged. Only the adapter differs. Simulator residents keep 
 
 **Production notes:** messages outside the 24-hour customer-service window need **approved templates** (`sendTemplate()` is implemented). Use a permanent System User token, and keep `WHATSAPP_APP_SECRET` set.
 
+### Alternative: Twilio WhatsApp Sandbox (no Meta setup)
+
+1. Sign up at <https://www.twilio.com/try-twilio> (free trial, includes test WhatsApp messages).
+2. Console → **Messaging → Try it out → Send a WhatsApp message**. From your phone, send the shown `join <code>` to the sandbox number (+1 415 523 8886).
+3. In **Sandbox settings**, set *When a message comes in* to `https://<your-app>/api/whatsapp/twilio` (POST).
+4. Set `WHATSAPP_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and redeploy.
+
+Sandbox sessions expire 3 days after joining (send `join <code>` again).
+
 ## 12. Replacing MockAIProvider with a real LLM
 
 All options below have a free path:
