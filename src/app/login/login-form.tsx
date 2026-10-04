@@ -35,8 +35,10 @@ export function LoginForm() {
       const r = await api<{ redirectTo: string }>("/api/auth/login", { body: { email: override ?? email, password: override ? "demo1234" : password } });
       router.replace(params.get("next") || r.redirectTo);
       router.refresh();
-    } catch {
-      setError(t.login.invalid);
+    } catch (err) {
+      // Only a rejected login is "invalid credentials"; surface server/database errors as-is
+      const msg = (err as Error).message;
+      setError(/invalid email or password/i.test(msg) ? t.login.invalid : `${t.common.error}: ${msg}`);
       setBusy(false);
     }
   }
