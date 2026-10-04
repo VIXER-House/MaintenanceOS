@@ -91,6 +91,30 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
     expect(Number(approved.approvedCost)).toBeCloseTo(22_800);
   });
 
+  it("registers an unknown number via WhatsApp, then files its first request", async () => {
+    if (!dbUp) return;
+    const phone = `+2012${Date.now().toString().slice(-8)}`;
+    const first = await send(phone, "الحنفية في المطبخ بتسرب");
+    expect(first.action).toBe("registration_requested");
+    expect(first.replies[0]).toContain("رقم الوحدة");
+    const r0 = await db.resident.findUniqueOrThrow({ where: { phone } });
+    expect(r0.verified).toBe(false);
+    expect(r0.unitId).toBeNull();
+    expect(await db.ticket.count({ where: { residentId: r0.id } })).toBe(0);
+
+    const wrong = await send(phone, "Z99-999");
+    expect(wrong.action).toBe("registration_requested");
+
+    const ok = await send(phone, "A02-102");
+    expect(["created", "follow_up_requested"]).toContain(ok.action);
+    const r1 = await db.resident.findUniqueOrThrow({ where: { phone }, include: { unit: true } });
+    expect(r1.unit?.code).toBe("A02-102");
+    expect(r1.verified).toBe(false);
+    const t = await db.ticket.findFirstOrThrow({ where: { residentId: r1.id }, include: { category: true } });
+    expect(t.category?.key).toBe("PLUMBING");
+    expect(t.description).toContain("الحنفية");
+  });
+
   it("runs the full demo scenario end-to-end", async () => {
     if (!dbUp) return;
     let ticketId: string | undefined;

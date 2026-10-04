@@ -28,6 +28,9 @@ const AR: Record<ResponseKind, Tpl> = {
   confirmation_thanks: (d) => `شكراً لتأكيدك! تم تسجيل إن طلب ${d.ticketNumber} اتحل.`,
   reopened: (d) => `آسفين إن المشكلة لسه موجودة. أعدنا فتح طلب ${d.ticketNumber} وهيتواصل معاك الفني.`,
   unknown_number: () => `أهلاً بك! رقمك غير مسجل كساكن في النظام. برجاء التواصل مع إدارة الكمبوند لتسجيل رقمك.`,
+  registration_needed: () => `أهلاً بيك 👋 رقمك لسه مش مسجل عندنا.\nابعتلي رقم الوحدة بتاعتك (مثال: A01-101) وهسجلك وأسجل طلبك فوراً.`,
+  registration_unit_not_found: (d) => `معلش، مش لاقي وحدة برقم ${d.unit}. اتأكد من الرقم وابعته تاني بالشكل ده: A01-101`,
+  registration_done: (d) => `تم تسجيلك على الوحدة ${d.unit} ✅ (هيتم التأكيد من إدارة الكمبوند).`,
   voice_failed: () => `معلش مقدرتش أسمع الرسالة الصوتية كويس. ممكن تكتبلي المشكلة؟`,
 };
 
@@ -52,6 +55,9 @@ const EN: Record<ResponseKind, Tpl> = {
   confirmation_thanks: (d) => `Thanks for confirming! ${d.ticketNumber} is marked as resolved.`,
   reopened: (d) => `Sorry the problem persists. We reopened ${d.ticketNumber} and the technician will follow up.`,
   unknown_number: () => `Welcome! Your number isn't registered as a resident. Please contact compound management to register.`,
+  registration_needed: () => `Welcome 👋 Your number isn't registered yet.\nPlease send your unit number (e.g. A01-101) and I'll register you and log your request right away.`,
+  registration_unit_not_found: (d) => `Sorry, I couldn't find unit ${d.unit}. Please check and send it like this: A01-101`,
+  registration_done: (d) => `You're registered for unit ${d.unit} ✅ (compound management will verify).`,
   voice_failed: () => `Sorry, I couldn't make out the voice note. Could you type the problem?`,
 };
 

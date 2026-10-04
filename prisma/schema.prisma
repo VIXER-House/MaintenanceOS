@@ -125,6 +125,7 @@ enum MessageStatus {
 
 enum ConversationState {
   IDLE
+  AWAITING_REGISTRATION
   AWAITING_INFO
   AWAITING_CONFIRMATION
 }
@@ -253,8 +254,11 @@ model Resident {
   id        String   @id @default(cuid())
   userId    String?  @unique
   user      User?    @relation(fields: [userId], references: [id])
-  unitId    String
-  unit      Unit     @relation(fields: [unitId], references: [id])
+  /// Null until an unknown WhatsApp number tells us its unit (self-registration)
+  unitId    String?
+  unit      Unit?    @relation(fields: [unitId], references: [id])
+  /// false = self-registered via WhatsApp, waiting for a manager to verify
+  verified  Boolean  @default(true)
   name      String
   nameAr    String?
   /// E.164 phone number — used as the WhatsApp identity.

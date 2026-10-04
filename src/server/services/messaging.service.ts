@@ -8,6 +8,8 @@ export interface ConversationContext {
   provider?: string;
   questionsAsked?: number;
   pendingQuestion?: string | null;
+  /** First request from an unregistered number, filed once the unit is known */
+  pendingRequest?: string | null;
   [k: string]: unknown;
 }
 

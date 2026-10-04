@@ -11,6 +11,7 @@ import { getFallbackVisionProvider, getVisionProvider, type ImageAnalysis } from
 import type { Actor } from "./actor";
 import { classifyRequest } from "./ai.service";
 import { generateReply } from "./ai.service";
+import { notifyRoles } from "./notification.service";
 import { ctx, getOrCreateConversation, normalizePhone, sendToResident, updateConversation } from "./messaging.service";
 import { attachmentTypeFor, saveFile } from "./storage.service";
 import {
@@ -34,6 +35,8 @@ export type IntakeAction =
   | "unknown_number"
   | "not_understood"
   | "voice_failed"
+  | "registration_requested"
+  | "registered"
   | "duplicate";
 
 export interface IntakeResult {
@@ -78,17 +81,16 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   }
 
   const phone = normalizePhone(msg.from);
-  const resident = await db.resident.findFirst({
-    where: { phone },
-    include: { unit: { include: { building: { include: { compound: true } } } } },
-  });
+  const residentInclude = { unit: { include: { building: { include: { compound: true } } } } } as const;
+  let resident = await db.resident.findFirst({ where: { phone }, include: residentInclude });
 
+  // Unknown number → create an unverified resident and start self-registration
   if (!resident) {
-    const lang = detectLanguage(msg.text ?? "");
-    const body = await generateReply({ kind: "unknown_number", language: lang, data: {} });
-    const provider = providerName === "meta" ? getWhatsAppProvider() : getMockWhatsAppProvider();
-    await provider.sendMessage(phone, body).catch(() => null);
-    return { action: "unknown_number", replies: [body] };
+    const fallbackName = msg.profileName?.trim() || `WhatsApp ${phone.slice(-4)}`;
+    resident = await db.resident.create({
+      data: { phone, name: fallbackName, nameAr: fallbackName, verified: false, language: detectLanguage(msg.text ?? "") },
+      include: residentInclude,
+    });
   }
 
   let conversation = await getOrCreateConversation(resident.id, phone);
@@ -167,11 +169,46 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     }
   }
 
-  const text = [msg.text, transcript].filter(Boolean).join("\n").trim();
+  let text = [msg.text, transcript].filter(Boolean).join("\n").trim();
   const reply = async (body: string, ticketId?: string | null) => {
-    await sendToResident(resident.id, body, { ticketId });
+    await sendToResident(resident!.id, body, { ticketId });
     return body;
   };
+
+  // ── 0. Self-registration: we don't know this resident's unit yet
+  if (!resident.unitId) {
+    const match = text.match(/\b([a-z]\d{2})\s*[-–_ ]?\s*(\d{3})\b/i);
+    const unit = match ? await db.unit.findUnique({ where: { code: `${match[1].toUpperCase()}-${match[2]}` } }) : null;
+    const remaining = match ? text.replace(match[0], "").replace(/^[\s,.:\-–]+|[\s,.:\-–]+$/g, "") : text;
+    const pending = (context.pendingRequest as string | undefined) ?? null;
+
+    if (!unit) {
+      // Remember the first real request so we can file it once we know the unit
+      const keep = pending ?? (remaining.length >= 3 ? remaining : null);
+      await updateConversation(conversation.id, { state: "AWAITING_REGISTRATION", context: { ...context, pendingRequest: keep } });
+      const kind = match ? "registration_unit_not_found" : "registration_needed";
+      const body = await generateReply({ kind, language: lang, data: { unit: match?.[0] ?? null } });
+      await reply(body);
+      return { action: "registration_requested", residentId: resident.id, conversationId: conversation.id, replies: [body] };
+    }
+
+    resident = await db.resident.update({ where: { id: resident.id }, data: { unitId: unit.id }, include: residentInclude });
+    await notifyRoles(["MAINTENANCE_MANAGER", "COMPOUND_MANAGER"], {
+      title: `New resident self-registered: ${unit.code}`,
+      body: `${resident.name} (${phone}) registered on WhatsApp for unit ${unit.code} — please verify.`,
+      link: `/residents`,
+    });
+    const welcome = await generateReply({ kind: "registration_done", language: lang, data: { unit: unit.code } });
+    await reply(welcome);
+    await updateConversation(conversation.id, { state: "IDLE", context: { ...context, pendingRequest: null } });
+    conversation = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+    // Continue with the request: the remainder of this message, or the one they sent first
+    text = remaining.length >= 3 ? remaining : pending ?? "";
+    if (!text && !attachmentIds.length) {
+      return { action: "registered", residentId: resident.id, conversationId: conversation.id, replies: [welcome] };
+    }
+  }
+  const unitInfo = resident.unit!;
 
   // ── 1. Answer to a pending follow-up question
   if (conversation.state === "AWAITING_INFO" && conversation.activeTicketId) {
@@ -241,7 +278,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   // ── 4. New maintenance request
   const requestText = text || imageFindings.map((f) => f.issue).join(", ");
   const knownAssets = await db.asset.findMany({
-    where: { OR: [{ unitId: resident.unitId }, { buildingId: resident.unit.buildingId, unitId: null }] },
+    where: { OR: [{ unitId: resident.unitId }, { buildingId: unitInfo.buildingId, unitId: null }] },
     select: { assetCode: true, name: true, type: true, location: true },
   });
   const outcome = await classifyRequest({
@@ -255,7 +292,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     const body = await generateReply({
       kind: requestText ? "greeting" : "not_understood",
       language: lang,
-      data: { name: (lang === "ar" ? resident.nameAr : resident.name)?.split(" ")[0], compound: lang === "ar" ? resident.unit.building.compound.nameAr ?? resident.unit.building.compound.name : resident.unit.building.compound.name },
+      data: { name: (lang === "ar" ? resident.nameAr : resident.name)?.split(" ")[0], compound: lang === "ar" ? unitInfo.building.compound.nameAr ?? unitInfo.building.compound.name : unitInfo.building.compound.name },
     });
     await reply(body);
     return { action: requestText ? "greeting" : "not_understood", residentId: resident.id, conversationId: conversation.id, replies: [body] };
@@ -265,8 +302,8 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     text: requestText,
     source: "WHATSAPP",
     residentId: resident.id,
-    unitId: resident.unitId,
-    compoundId: resident.unit.building.compoundId,
+    unitId: unitInfo.id,
+    compoundId: unitInfo.building.compoundId,
     actor: residentActor,
     outcome,
     imageFindings,

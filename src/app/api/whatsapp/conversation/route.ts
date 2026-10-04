@@ -29,7 +29,8 @@ export const GET = route(async (req) => {
     },
   });
   return {
-    resident: { id: resident.id, name: resident.name, nameAr: resident.nameAr, phone: resident.phone, unit: resident.unit.code, language: resident.language },
+    resident: { id: resident.id, name: resident.name, nameAr: resident.nameAr, phone: resident.phone, unit: resident.unit?.code ?? null,
+      verified: resident.verified, language: resident.language },
     conversation: conversation ? { state: conversation.state, activeTicketId: conversation.activeTicketId } : null,
     messages: messages.map((m) => ({
       id: m.id,

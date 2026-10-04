@@ -70,6 +70,9 @@ export type ResponseKind =
   | "confirmation_thanks"
   | "reopened"
   | "unknown_number"
+  | "registration_needed"
+  | "registration_unit_not_found"
+  | "registration_done"
   | "voice_failed";
 
 export interface ResponseInput {

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, CheckCheck, ExternalLink, ImagePlus, Loader2, Mic, Paperclip, Search, Send, Sparkles, Phone, Video, MoreVertical } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { UserPlus, Check, CheckCheck, ExternalLink, ImagePlus, Loader2, Mic, Paperclip, Search, Send, Sparkles, Phone, Video, MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -26,10 +27,11 @@ interface ResidentItem {
   language: string;
   openTickets: number;
   lastMessage: string | null;
+  verified: boolean;
 }
 
 interface ConversationData {
-  resident: { id: string; name: string; nameAr: string | null; phone: string; unit: string; language: string };
+  resident: { id: string; name: string; nameAr: string | null; phone: string; unit: string | null; language: string; verified: boolean };
   conversation: { state: string; activeTicketId: string | null } | null;
   messages: { id: string; direction: "INBOUND" | "OUTBOUND"; body: string; mediaType: string | null; mediaUrl: string | null; transcript: string | null; status: string; ticketId: string | null; createdAt: string; analysis: Record<string, unknown> | null }[];
   tickets: {
@@ -74,9 +76,18 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
   const [pending, setPending] = useState<{ body: string; at: string } | null>(null);
   const [filter, setFilter] = useState("");
   const [voiceOpen, setVoiceOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  /** A chat started from an unregistered number (no resident record until its first message) */
+  const [newChat, setNewChat] = useState<{ phone: string; name: string } | null>(null);
+  const router = useRouter();
   const scrollRef = useRef<HTMLDivElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
-  const resident = residents.find((r) => r.id === residentId);
+  const known = residents.find((r) => r.id === residentId);
+  const resident: ResidentItem | undefined =
+    known ??
+    (newChat
+      ? { id: residentId ?? "", name: newChat.name || newChat.phone, nameAr: newChat.name || newChat.phone, phone: newChat.phone, unit: "—", language: "ar", openTickets: 0, lastMessage: null, verified: false }
+      : undefined);
 
   const load = useCallback(async () => {
     if (!residentId) return;
@@ -89,6 +100,7 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
 
   useEffect(() => {
     setData(null);
+    if (!residentId) return;
     load();
     const id = setInterval(load, 3000);
     return () => clearInterval(id);
@@ -103,8 +115,15 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
     setSending(true);
     setPending({ body: preview, at: new Date().toISOString() });
     try {
-      await api("/api/whatsapp/simulate", { body: { from: resident.phone, profileName: resident.name, ...payload } });
-      await load();
+      const r = await api<{ residentId?: string }>("/api/whatsapp/simulate", { body: { from: resident.phone, profileName: resident.name, ...payload } });
+      if (!residentId && r.residentId) {
+        // first message from a new number created its (unverified) resident record
+        setResidentId(r.residentId);
+        router.refresh();
+      } else {
+        await load();
+        if (!resident.verified || resident.unit === "—") router.refresh();
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -144,19 +163,28 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
               <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t.whatsapp.residents} className="ps-8" />
             </div>
+            <Button variant="outline" size="sm" className="mt-2 w-full" onClick={() => setNewOpen(true)}>
+              <UserPlus /> {t.whatsapp.newNumber}
+            </Button>
           </div>
           <div className="max-h-[640px] overflow-y-auto">
             {shown.map((r) => (
               <button
                 key={r.id}
-                onClick={() => setResidentId(r.id)}
+                onClick={() => {
+                  setNewChat(null);
+                  setResidentId(r.id);
+                }}
                 className={cn("flex w-full items-center gap-3 border-b px-3 py-2.5 text-start hover:bg-muted/60", r.id === residentId && "bg-accent")}
               >
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-emerald-100 text-xs font-semibold text-emerald-800">{(r.nameAr ?? r.name).slice(0, 2)}</div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between gap-1">
                     <span className="truncate text-sm font-medium">{locale === "ar" || r.language === "ar" ? r.nameAr ?? r.name : r.name}</span>
-                    <span className="text-[10px] text-muted-foreground">{r.unit}</span>
+                    <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                      {!r.verified && <span className="rounded bg-amber-100 px-1 text-amber-800">{t.whatsapp.unverified}</span>}
+                      {r.unit}
+                    </span>
                   </div>
                   <div className="truncate text-xs text-muted-foreground" dir="auto">{r.lastMessage ?? r.phone}</div>
                 </div>
@@ -172,12 +200,13 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
             <div className="grid h-9 w-9 place-items-center rounded-full bg-white/20 text-xs font-semibold">{(resident?.nameAr ?? resident?.name ?? "").slice(0, 2)}</div>
             <div className="min-w-0 flex-1 leading-tight">
               <div className="truncate text-sm font-medium">{resident ? `${resident.nameAr ?? resident.name}` : "—"}</div>
-              <div className="text-[11px] opacity-80" dir="ltr">{resident?.phone} · {resident?.unit} · {sending ? t.whatsapp.sending : t.whatsapp.online}</div>
+              <div className="text-[11px] opacity-80" dir="ltr">{resident?.phone} · {resident?.unit}{resident && !resident.verified ? ` · ${t.whatsapp.unverified}` : ""} · {sending ? t.whatsapp.sending : t.whatsapp.online}</div>
             </div>
             <Video className="h-4 w-4 opacity-80" /><Phone className="h-4 w-4 opacity-80" /><MoreVertical className="h-4 w-4 opacity-80" />
           </div>
           <div ref={scrollRef} className="wa-pattern flex-1 space-y-1.5 overflow-y-auto px-4 py-3 sm:px-10">
-            {!data && <div className="grid h-full place-items-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+            {!data && residentId && <div className="grid h-full place-items-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+            {!residentId && newChat && <p className="mx-auto mt-6 w-fit rounded-md bg-[#fff6c5] px-3 py-1.5 text-center text-xs text-slate-700">{t.whatsapp.newNumberHint}</p>}
             {data?.messages.map((m) => <Bubble key={m.id} m={m} />)}
             {pending && (
               <>
@@ -285,6 +314,21 @@ export function WhatsAppSimulator({ residents, initialResidentId }: { residents:
           )}
         </div>
       </div>
+      <NewNumberDialog
+        open={newOpen}
+        onOpenChange={setNewOpen}
+        onStart={(phone, name) => {
+          const existing = residents.find((r) => r.phone.replace(/\D/g, "") === phone.replace(/\D/g, ""));
+          if (existing) {
+            setNewChat(null);
+            setResidentId(existing.id);
+          } else {
+            setNewChat({ phone, name });
+            setResidentId(undefined);
+            setData(null);
+          }
+        }}
+      />
       <VoiceDialog open={voiceOpen} onOpenChange={setVoiceOpen} onSend={(payload, preview) => send(payload, preview)} />
     </div>
   );
@@ -358,6 +402,43 @@ function VoiceDialog({ open, onOpenChange, onSend }: { open: boolean; onOpenChan
             }}
           >
             <Paperclip /> {t.whatsapp.sendVoice}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function NewNumberDialog({ open, onOpenChange, onStart }: { open: boolean; onOpenChange: (o: boolean) => void; onStart: (phone: string, name: string) => void }) {
+  const { t } = useI18n();
+  const [phone, setPhone] = useState(() => `+2011${Math.floor(10000000 + Math.random() * 89999999)}`);
+  const [name, setName] = useState("");
+  const valid = phone.replace(/\D/g, "").length >= 8;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><UserPlus className="h-4 w-4" /> {t.whatsapp.newNumberTitle}</DialogTitle>
+          <DialogDescription>{t.whatsapp.newNumberHint}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5">
+          <Label>{t.whatsapp.phone}</Label>
+          <Input value={phone} onChange={(e) => setPhone(e.target.value)} dir="ltr" />
+        </div>
+        <div className="space-y-1.5">
+          <Label>{t.whatsapp.profileName}</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="أحمد سمير" dir="auto" />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>{t.common.cancel}</Button>
+          <Button
+            disabled={!valid}
+            onClick={() => {
+              onStart(`+${phone.replace(/\D/g, "")}`, name.trim());
+              onOpenChange(false);
+            }}
+          >
+            {t.whatsapp.start}
           </Button>
         </DialogFooter>
       </DialogContent>
