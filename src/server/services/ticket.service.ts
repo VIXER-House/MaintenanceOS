@@ -18,6 +18,7 @@ import { recordEvent } from "./event.service";
 import { getOrCreateConversation, sendResidentUpdate, updateConversation, ctx } from "./messaging.service";
 import { notifyRoles, notifyUsers } from "./notification.service";
 import { computeTicketSla } from "./sla.service";
+import { getGlobalPriorityRules } from "./settings.service";
 import { recomputeContractorMetrics } from "./contractor.service";
 
 // ───────────────────────── helpers ─────────────────────────
@@ -254,6 +255,7 @@ export async function applyAnalysis(
   const category = await db.category.findUnique({ where: { key: categoryKey } });
 
   const decision = evaluatePriority({
+    globalRules: await getGlobalPriorityRules(),
     text: opts.text,
     categoryDefault: (category?.defaultPriority as Priority) ?? CATEGORY_BY_KEY[categoryKey]?.defaultPriority ?? "MEDIUM",
     categoryRules: (category?.priorityRules as unknown as PriorityRule[]) ?? [],
@@ -374,6 +376,98 @@ export async function handleFollowUpAnswer(ticketId: string, answer: string, act
   t = await move(applied.ticket, "NEW", AI_ACTOR, "STATUS_CHANGED", "Information complete — ready for dispatch");
   const assignment = await autoAssign(t.id);
   return { ticket: await getTicketOrThrow(t.id), escalated: applied.escalated, outcome, assignment, sla: applied.sla };
+}
+
+/** Open statuses in which a new report of the same type is merged instead of opening a new ticket. */
+export const MERGEABLE_STATUSES: TicketStatus[] = [
+  "NEW",
+  "ASSIGNED",
+  "ACKNOWLEDGED",
+  "IN_PROGRESS",
+  "WAITING_QUOTATION",
+  "WAITING_APPROVAL",
+  "APPROVED",
+  "REJECTED",
+];
+
+/** Latest open ticket of the same category for this resident (or anyone in their unit). */
+export async function findOpenTicketOfSameType(residentId: string, unitId: string | null, categoryKey: string) {
+  return db.ticket.findFirst({
+    where: {
+      status: { in: MERGEABLE_STATUSES },
+      category: { key: categoryKey },
+      OR: [{ residentId }, ...(unitId ? [{ unitId }] : [])],
+    },
+    orderBy: { createdAt: "desc" },
+    include: ticketInclude,
+  });
+}
+
+/**
+ * Add a second problem of the same type to an existing open ticket (instead of a duplicate ticket).
+ * The description gains the new problem, priority is re-evaluated on the combined text and only ever
+ * goes UP (with SLA restarted from now), and the assignee + managers are notified.
+ */
+export async function addIssueToTicket(
+  ticketId: string,
+  input: { text: string; issue?: string | null; aiPriority?: string | null; aiConfidence?: number | null; attachmentIds?: string[]; messageId?: string | null },
+  actor: Actor,
+) {
+  const t = await getTicketOrThrow(ticketId);
+  if (!MERGEABLE_STATUSES.includes(t.status as TicketStatus)) throw new ConflictError("Ticket is no longer open");
+  const stamp = new Date().toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short", timeZone: "Africa/Cairo" });
+  const description = `${t.description}\n\n➕ Additional issue (${stamp}): ${input.text}`;
+  const category = t.categoryId ? await db.category.findUnique({ where: { id: t.categoryId } }) : null;
+  const decision = evaluatePriority({
+    globalRules: await getGlobalPriorityRules(),
+    text: description,
+    categoryDefault: (category?.defaultPriority as Priority) ?? "MEDIUM",
+    categoryRules: (category?.priorityRules as unknown as PriorityRule[]) ?? [],
+    aiPriority: input.aiPriority,
+    aiConfidence: input.aiConfidence,
+  });
+  const rank = (p: string) => ["LOW", "MEDIUM", "HIGH", "CRITICAL", "EMERGENCY"].indexOf(p);
+  const escalate = !t.priorityOverridden && rank(decision.priority) > rank(t.priority);
+  const sla = escalate ? await computeTicketSla(decision.priority, new Date(), category?.defaultResolutionMinutes) : null;
+
+  await db.$transaction(async (tx) => {
+    await tx.ticket.update({
+      where: { id: ticketId },
+      data: {
+        description,
+        ...(escalate && sla
+          ? {
+              priority: decision.priority,
+              slaResponseDueAt: sla.responseDueAt,
+              slaResolutionDueAt: sla.resolutionDueAt,
+              slaResponseBreached: false,
+              slaResolutionBreached: false,
+            }
+          : {}),
+      },
+    });
+    await recordEvent(ticketId, "NOTE_ADDED", actor, `Additional issue reported: "${input.text.slice(0, 300)}"${input.issue ? ` (${input.issue})` : ""}`, { additionalIssue: true }, tx);
+    if (escalate && sla) {
+      await recordEvent(ticketId, "PRIORITY_CHANGED", AI_ACTOR, `Priority ${t.priority} → ${decision.priority} after an additional issue: ${decision.reasons.join("; ")}`, { from: t.priority, to: decision.priority }, tx);
+      await recordEvent(ticketId, "SLA_SET", SYSTEM_ACTOR, `SLA restarted: respond within ${formatMinutesHuman(sla.responseMinutes, "en")}, resolve within ${formatMinutesHuman(sla.resolutionMinutes, "en")}`, {
+        responseDueAt: sla.responseDueAt.toISOString(),
+        resolutionDueAt: sla.resolutionDueAt.toISOString(),
+      }, tx);
+    }
+    if (input.attachmentIds?.length) await tx.ticketAttachment.updateMany({ where: { id: { in: input.attachmentIds } }, data: { ticketId } });
+    if (input.messageId) await tx.ticketMessage.update({ where: { id: input.messageId }, data: { ticketId } });
+  });
+
+  const updated = await getTicketOrThrow(ticketId);
+  const payload = {
+    title: `${escalate && decision.priority === "EMERGENCY" ? "🚨 " : ""}Additional issue on ${t.ticketNumber}${escalate ? ` — now ${decision.priority}` : ""}`,
+    body: input.issue ?? input.text.slice(0, 200),
+    link: `/tickets/${ticketId}`,
+    ticketId,
+  };
+  await notifyUsers(assigneeUserIds(updated), payload);
+  await notifyRoles(escalate && ["EMERGENCY", "CRITICAL"].includes(decision.priority) ? ["MAINTENANCE_MANAGER", "COMPOUND_MANAGER"] : ["MAINTENANCE_MANAGER"], payload);
+  return { ticket: updated, escalated: escalate, sla };
 }
 
 /**

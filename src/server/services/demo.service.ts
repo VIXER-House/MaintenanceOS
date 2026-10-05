@@ -46,7 +46,8 @@ async function managerActor(): Promise<Actor> {
 
 async function inbound(phone: string, text: string) {
   const [msg] = await getMockWhatsAppProvider().receiveMessage({ from: phone, type: "text", text });
-  return handleInboundMessage(msg, "mock");
+  // The demo always files a fresh ticket, even if an earlier demo run left one open
+  return handleInboundMessage(msg, "mock", { skipDuplicateCheck: true });
 }
 
 export async function runDemoStep(step: DemoStep, ticketId?: string | null) {

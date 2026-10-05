@@ -6,7 +6,7 @@ import { CATEGORY_BY_KEY } from "@/server/domain/categories";
 import { PRIORITY_LABELS, formatMinutesHuman } from "@/server/domain/labels";
 import type { InboundMessage } from "@/server/providers/whatsapp";
 import { getMockWhatsAppProvider, getWhatsAppProvider } from "@/server/providers/whatsapp";
-import { getFallbackSpeechProvider, getSpeechProvider } from "@/server/providers/speech";
+import { getFallbackSpeechProvider, getMockSpeechProvider, getSpeechProvider } from "@/server/providers/speech";
 import { getFallbackVisionProvider, getVisionProvider, type ImageAnalysis } from "@/server/providers/vision";
 import type { Actor } from "./actor";
 import { classifyRequest } from "./ai.service";
@@ -14,9 +14,18 @@ import { generateReply } from "./ai.service";
 import { notifyRoles } from "./notification.service";
 import { recordEvent } from "./event.service";
 import { hasMaintenanceVocabulary } from "@/server/providers/ai/mock-ai.provider";
+import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
+import { evaluatePriority } from "@/server/engines/priority/priority-engine";
+import { getGlobalPriorityRules } from "./settings.service";
+import type { PriorityRule } from "@/server/domain/categories";
+import type { Priority } from "@/server/domain/constants";
+import type { TicketStatus } from "@/server/domain/constants";
 import { ctx, getOrCreateConversation, normalizePhone, sendToResident, updateConversation } from "./messaging.service";
 import { attachmentTypeFor, saveFile } from "./storage.service";
 import {
+  addIssueToTicket,
+  findOpenTicketOfSameType,
+  MERGEABLE_STATUSES,
   createAndTriageTicket,
   getTicketOrThrow,
   handleFollowUpAnswer,
@@ -40,7 +49,10 @@ export type IntakeAction =
   | "registration_requested"
   | "registered"
   | "duplicate"
-  | "comment";
+  | "comment"
+  | "duplicate_check"
+  | "duplicate_same"
+  | "issue_added";
 
 export interface IntakeResult {
   action: IntakeAction;
@@ -65,6 +77,10 @@ function isYes(text: string) {
   const n = normalizeArabic(text);
   return YES.some((k) => matchKeyword(n, k));
 }
+/** "لا" / "no" with nothing else */
+function isNegativeOnly(text: string) {
+  return normalizeArabic(text).split(" ").filter(Boolean).length <= 2 && isNo(text);
+}
 function isStatusQuery(text: string) {
   const n = normalizeArabic(text);
   return /maint-?\d+/i.test(text) || (n.split(" ").length <= 4 && STATUS.some((k) => matchKeyword(n, k)));
@@ -78,7 +94,7 @@ function isStatusQuery(text: string) {
  *   IDLE ──request──▶ ticket created ──(missing info)──▶ AWAITING_INFO ──answer──▶ triaged/assigned ──▶ IDLE
  *   ticket completed ──▶ AWAITING_CONFIRMATION ──"تمام"/"لسه"──▶ confirmed / reopened
  */
-export async function handleInboundMessage(msg: InboundMessage, providerName: string): Promise<IntakeResult> {
+export async function handleInboundMessage(msg: InboundMessage, providerName: string, opts: { skipDuplicateCheck?: boolean } = {}): Promise<IntakeResult> {
   // Idempotency: Meta retries webhooks
   if (msg.providerMessageId) {
     const dup = await db.ticketMessage.findFirst({ where: { providerMessageId: msg.providerMessageId, direction: "INBOUND" } });
@@ -140,7 +156,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     let analysis: Prisma.InputJsonValue | undefined;
 
     if (type === "AUDIO") {
-      transcript = await transcribe(buffer, msg.media.fileName ?? stored.fileName, msg.media.mimeType, msg.media.simulatedTranscript);
+      transcript = await transcribe(buffer, msg.media.fileName ?? stored.fileName, msg.media.mimeType, msg.media.simulatedTranscript, providerName === "mock");
       if (transcript) {
         analysis = { transcript };
         await db.ticketMessage.update({ where: { id: inbound.id }, data: { transcript } });
@@ -180,6 +196,52 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     return body;
   };
 
+  /** Same problem reported again → note on the existing ticket, no new ticket. */
+  const commentOn = async (ticketId: string, comment: string, messageIds: (string | null | undefined)[], kind: "duplicate_same" | "comment_received") => {
+    await db.ticketMessage.updateMany({ where: { id: { in: messageIds.filter(Boolean) as string[] } }, data: { ticketId } });
+    const full = await getTicketOrThrow(ticketId);
+    await recordEvent(ticketId, "NOTE_ADDED", residentActor, `Resident: "${comment.slice(0, 300)}"`);
+    await notifyRoles(["MAINTENANCE_MANAGER"], { title: `Resident follow-up on ${full.ticketNumber}`, body: comment.slice(0, 200), link: `/tickets/${ticketId}`, ticketId });
+    const body = await generateReply({ kind, language: lang, data: { ...statusLine(full, lang), priority: PRIORITY_LABELS[full.priority][lang] } });
+    await reply(body, ticketId);
+    return { body, full };
+  };
+  /** A different problem of the same type → added to the existing ticket. */
+  const addIssue = async (ticketId: string, input: Parameters<typeof addIssueToTicket>[1], extraMessageIds: string[] = []) => {
+    const r = await addIssueToTicket(ticketId, input, residentActor);
+    if (extraMessageIds.length) await db.ticketMessage.updateMany({ where: { id: { in: extraMessageIds } }, data: { ticketId } });
+    const policies = await loadSlaPolicies();
+    const body = await generateReply({
+      kind: "issue_added",
+      language: lang,
+      data: {
+        ticketNumber: r.ticket.ticketNumber,
+        issue: input.issue ?? null,
+        technician: statusLine(r.ticket, lang).technician,
+        escalated: r.escalated ? 1 : 0,
+        priority: PRIORITY_LABELS[r.ticket.priority][lang],
+        sla: formatMinutesHuman(r.sla?.responseMinutes ?? policies[r.ticket.priority].responseMinutes, lang),
+      },
+    });
+    await reply(body, ticketId);
+    return { action: "issue_added" as const, residentId: resident!.id, conversationId: conversation.id, ticketId, ticketNumber: r.ticket.ticketNumber, replies: [body] };
+  };
+  const askSameOrDifferent = async (existing: Awaited<ReturnType<typeof getTicketOrThrow>>) => {
+    const analysis = lang === "ar" ? await db.aIAnalysis.findFirst({ where: { ticketId: existing.id }, orderBy: { createdAt: "asc" }, select: { entities: true } }) : null;
+    const issueAr = (analysis?.entities as { issueAr?: string } | null)?.issueAr;
+    const body = await generateReply({
+      kind: "duplicate_found",
+      language: lang,
+      data: {
+        ...statusLine(existing, lang),
+        category: existing.category ? (lang === "ar" ? existing.category.nameAr : existing.category.nameEn) : "",
+        issue: issueAr || existing.title,
+      },
+    });
+    await reply(body, existing.id);
+    return body;
+  };
+
   // ── 0. Self-registration: we don't know this resident's unit yet
   if (!resident.unitId) {
     const match = text.match(/\b([a-z]\d{2})\s*[-–_ ]?\s*(\d{3})\b/i);
@@ -214,6 +276,44 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     }
   }
   const unitInfo = resident.unit!;
+
+  // ── 0b. Answer to "same problem or a different one?" (open ticket of the same type)
+  const dup = context.duplicateCheck;
+  if (dup && conversation.state === "AWAITING_INFO") {
+    const existing = await db.ticket.findUnique({ where: { id: dup.ticketId } });
+    const clear = () => updateConversation(conversation.id, { state: "IDLE", activeTicketId: null, context: { ...context, duplicateCheck: null } });
+    if (!existing || !MERGEABLE_STATUSES.includes(existing.status as TicketStatus)) {
+      // Closed in the meantime → file the original message as a new request below
+      await clear();
+      conversation = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+      text = [dup.text, text].filter(Boolean).join("\n");
+      attachmentIds.push(...(dup.attachmentIds ?? []));
+    } else {
+      const different = isDifferentIssueAnswer(text) || (!isSameIssueAnswer(text) && hasMaintenanceVocabulary(text));
+      const same = !different && (isSameIssueAnswer(text) || (dup.asked ?? 1) >= 2);
+      if (different) {
+        await clear();
+        const issueText = hasMaintenanceVocabulary(text) && !isNegativeOnly(text) ? `${dup.text}\n${text}` : dup.text;
+        return addIssue(
+          existing.id,
+          { text: issueText, issue: dup.issue, aiPriority: dup.aiPriority, aiConfidence: dup.aiConfidence, attachmentIds: [...(dup.attachmentIds ?? []), ...attachmentIds], messageId: dup.messageId },
+          [inbound.id],
+        );
+      }
+      if (same) {
+        await clear();
+        const { body, full } = await commentOn(existing.id, dup.text, [dup.messageId, inbound.id], "duplicate_same");
+        if (dup.attachmentIds?.length || attachmentIds.length) {
+          await db.ticketAttachment.updateMany({ where: { id: { in: [...(dup.attachmentIds ?? []), ...attachmentIds] } }, data: { ticketId: existing.id } });
+        }
+        return { action: "duplicate_same", residentId: resident.id, conversationId: conversation.id, ticketId: existing.id, ticketNumber: full.ticketNumber, replies: [body] };
+      }
+      // Unclear answer → ask once more
+      await updateConversation(conversation.id, { context: { ...context, duplicateCheck: { ...dup, asked: (dup.asked ?? 1) + 1 } } });
+      const body = await askSameOrDifferent(await getTicketOrThrow(existing.id));
+      return { action: "duplicate_check", residentId: resident.id, conversationId: conversation.id, ticketId: existing.id, ticketNumber: existing.ticketNumber, replies: [body] };
+    }
+  }
 
   // ── 1. Answer to a pending follow-up question
   if (conversation.state === "AWAITING_INFO" && conversation.activeTicketId) {
@@ -305,22 +405,40 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
         })
       : null;
     if (recent) {
-      await db.ticketMessage.update({ where: { id: inbound.id }, data: { ticketId: recent.id } });
-      await recordEvent(recent.id, "NOTE_ADDED", residentActor, `Resident: "${text.slice(0, 300)}"`);
-      await notifyRoles(["MAINTENANCE_MANAGER"], {
-        title: `Resident follow-up on ${recent.ticketNumber}`,
-        body: text.slice(0, 200),
-        link: `/tickets/${recent.id}`,
-        ticketId: recent.id,
-      });
-      const full = await getTicketOrThrow(recent.id);
-      const body = await generateReply({
-        kind: "comment_received",
-        language: lang,
-        data: { ...statusLine(full, lang), priority: PRIORITY_LABELS[full.priority][lang] },
-      });
-      await reply(body, recent.id);
+      const { body } = await commentOn(recent.id, text, [inbound.id], "comment_received");
       return { action: "comment", residentId: resident.id, conversationId: conversation.id, ticketId: recent.id, ticketNumber: recent.ticketNumber, replies: [body] };
+    }
+  }
+
+  // ── 4b. Same type as an open ticket → don't open a duplicate
+  {
+    const c = outcome.classification;
+    const existing = !opts.skipDuplicateCheck && c.isMaintenanceRequest && requestText && c.category !== "OTHER" ? await findOpenTicketOfSameType(resident.id, resident.unitId, c.category) : null;
+    if (existing) {
+      const cat = await db.category.findUnique({ where: { key: c.category } });
+      const urgent =
+        evaluatePriority({
+          text: requestText,
+          globalRules: await getGlobalPriorityRules(),
+          categoryDefault: (cat?.defaultPriority as Priority | undefined) ?? CATEGORY_BY_KEY[c.category]?.defaultPriority,
+          categoryRules: (cat?.priorityRules as unknown as PriorityRule[] | undefined) ?? [],
+          aiPriority: c.priority,
+        }).priority === "EMERGENCY";
+      const issue = lang === "ar" ? c.issueAr ?? c.issue : c.issue;
+      // Clearly another problem ("مشكلة تانية…") or an emergency → add it right away; otherwise ask
+      if (mentionsDistinctIssue(requestText) || urgent) {
+        return addIssue(existing.id, { text: requestText, issue, aiPriority: c.priority, aiConfidence: c.confidence, attachmentIds, messageId: inbound.id });
+      }
+      await updateConversation(conversation.id, {
+        state: "AWAITING_INFO",
+        activeTicketId: existing.id,
+        context: {
+          ...context,
+          duplicateCheck: { ticketId: existing.id, text: requestText, issue, aiPriority: c.priority, aiConfidence: c.confidence, attachmentIds, messageId: inbound.id, asked: 1 },
+        },
+      });
+      const body = await askSameOrDifferent(existing);
+      return { action: "duplicate_check", residentId: resident.id, conversationId: conversation.id, ticketId: existing.id, ticketNumber: existing.ticketNumber, replies: [body] };
     }
   }
 
@@ -367,19 +485,20 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
 }
 
 /** Speech-to-text with graceful fallback (configured provider → mock → null). */
-async function transcribe(buffer: Buffer, fileName: string, mimeType: string, simulatedTranscript?: string): Promise<string | null> {
-  const primary = getSpeechProvider();
-  try {
-    return (await primary.transcribe({ buffer, fileName, mimeType, simulatedTranscript })).text;
-  } catch (e) {
-    console.warn(`[speech] ${primary.name} failed: ${(e as Error).message}`);
-    if (primary === getFallbackSpeechProvider()) return null;
+async function transcribe(buffer: Buffer, fileName: string, mimeType: string, simulatedTranscript?: string, fromSimulator = false): Promise<string | null> {
+  const input = { buffer, fileName, mimeType, simulatedTranscript };
+  // Simulator voice notes carry their transcript — never send them to a paid API
+  if (simulatedTranscript?.trim()) return (await getMockSpeechProvider().transcribe(input)).text;
+  for (const provider of [getSpeechProvider(), getFallbackSpeechProvider()]) {
+    // The mock invents a plausible transcript: fine for the simulator, never for a real resident's voice note
+    if (!provider || (provider.name === "mock" && !fromSimulator)) continue;
     try {
-      return (await getFallbackSpeechProvider().transcribe({ buffer, fileName, mimeType, simulatedTranscript })).text;
-    } catch {
-      return null;
+      return (await provider.transcribe(input)).text;
+    } catch (e) {
+      console.warn(`[speech] ${provider.name} failed: ${(e as Error).message}`);
     }
   }
+  return null; // → the resident is asked to type the problem
 }
 
 /** Vision analysis with graceful fallback. Image analysis is never required for ticket creation. */

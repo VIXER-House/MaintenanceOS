@@ -25,3 +25,30 @@ export function isAffirmativeAnswer(text: string): boolean {
   const n = normalizeArabic(text);
   return /\d/.test(text) || AFFIRM.some((k) => matchKeyword(n, k));
 }
+
+/** Phrases that say a message is about an additional / different problem. */
+const DISTINCT = [
+  "مشكله تانيه", "مشكله تاني", "مشكله تانيه كمان", "مشكله جديده", "مشكله مختلفه", "مشكله غير", "حاجه تانيه", "حاجه غير", "عطل تاني",
+  "عطل جديد", "بالاضافه", "مختلفه", "مختلف", "تانيه خالص", "مش نفس", "غير دي", "غير ده",
+  "another", "different", "new issue", "new problem", "additional", "second issue", "not the same",
+];
+/** Phrases that confirm it's the same problem already reported. */
+const SAME = ["نفس المشكله", "نفسها", "نفس الحاجه", "هي هي", "هيا هيا", "نفس", "ايوه نفس", "same", "same issue", "same problem", "the same"];
+
+/** "...and also the toilet is broken" — the message itself says this is another problem. */
+export function mentionsDistinctIssue(text: string): boolean {
+  const n = normalizeArabic(text);
+  return DISTINCT.some((k) => matchKeyword(n, k));
+}
+
+/** Answer to "same problem or a different one?" → "different". "لا" (= not the same) counts. */
+export function isDifferentIssueAnswer(text: string): boolean {
+  return mentionsDistinctIssue(text) || (isNegativeAnswer(text) && !isSameIssueAnswer(text));
+}
+
+/** Answer to "same problem or a different one?" → "same". "اه / ايوه" (= yes, the same) counts. */
+export function isSameIssueAnswer(text: string): boolean {
+  const n = normalizeArabic(text);
+  if (mentionsDistinctIssue(text)) return false;
+  return SAME.some((k) => matchKeyword(n, k)) || (!isNegativeAnswer(text) && ["اه", "ايوه", "ايوة", "ايوا", "نعم", "صح", "yes", "yeah", "yep"].some((k) => matchKeyword(n, k)));
+}

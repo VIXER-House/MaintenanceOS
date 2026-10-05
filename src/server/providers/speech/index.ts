@@ -56,23 +56,30 @@ export class MockSpeechProvider implements SpeechToTextProvider {
   }
 }
 
+/** Context that helps speech models spell compound vocabulary correctly. */
+export const TRANSCRIBE_PROMPT =
+  "WhatsApp voice note from a resident of an Egyptian residential compound reporting a maintenance problem. " +
+  "Egyptian Arabic, sometimes mixed with English words (AC, unit A01-101, MAINT-000123). " +
+  "Common words: تكييف، سباكة، تسريب، كهربا، أسانسير، سخان، حنفية، بلاعة، محبوس.";
+
 /**
  * Whisper via any OpenAI-compatible /audio/transcriptions endpoint:
- * - Local & free: faster-whisper-server / speaches (http://localhost:8000/v1)
  * - Groq free tier: https://api.groq.com/openai/v1 (whisper-large-v3-turbo)
+ * - Local & free: faster-whisper-server / speaches (http://localhost:8000/v1)
  */
 export class WhisperProvider implements SpeechToTextProvider {
-  readonly name = "whisper";
   constructor(
     private readonly baseUrl: string,
     private readonly model: string,
     private readonly apiKey?: string,
+    readonly name = "whisper",
   ) {}
 
   async transcribe(file: AudioInput): Promise<TranscriptionResult> {
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(file.buffer)], { type: file.mimeType }), file.fileName);
     form.append("model", this.model);
+    form.append("prompt", TRANSCRIBE_PROMPT);
     form.append("language", "ar");
     const res = await fetchJson<{ text?: string; language?: string }>(`${this.baseUrl.replace(/\/$/, "")}/audio/transcriptions`, {
       method: "POST",
@@ -80,8 +87,8 @@ export class WhisperProvider implements SpeechToTextProvider {
       timeoutMs: 60000,
       headers: this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : undefined,
     });
-    if (!res.text?.trim()) throw new Error("whisper: empty transcription");
-    return { text: res.text.trim(), language: res.language, provider: this.name };
+    if (!res.text?.trim()) throw new Error(`${this.name}: empty transcription`);
+    return { text: res.text.trim(), language: res.language, provider: `${this.name}:${this.model}` };
   }
 }
 
@@ -102,7 +109,7 @@ export class GeminiSpeechProvider implements SpeechToTextProvider {
           {
             role: "user",
             parts: [
-              { text: "Transcribe this WhatsApp voice note exactly as spoken (Egyptian Arabic, Arabic or English). Output only the transcript, no commentary." },
+              { text: `Transcribe this audio exactly as spoken, word for word, without summarizing or skipping anything. ${TRANSCRIBE_PROMPT} Output only the transcript, no commentary.` },
               { inline_data: { mime_type: file.mimeType.split(";")[0] || "audio/ogg", data: file.buffer.toString("base64") } },
             ],
           },
@@ -134,6 +141,18 @@ export function getSpeechProvider(): SpeechToTextProvider {
   return instance;
 }
 
-export function getFallbackSpeechProvider(): SpeechToTextProvider {
+/**
+ * Second chance for a real voice note: Gemini (free) when the primary is something else.
+ * Never the mock — a made-up transcript would file a wrong ticket; the resident is asked to type instead.
+ */
+export function getFallbackSpeechProvider(): SpeechToTextProvider | null {
+  const c = getConfig();
+  const primary = getSpeechProvider();
+  if (primary.name !== "gemini" && c.GEMINI_API_KEY) return new GeminiSpeechProvider(GEMINI_DEFAULT_MODEL, c.GEMINI_API_KEY);
+  return null;
+}
+
+/** The simulator's stand-in transcriber (uses the typed "simulated transcript"). */
+export function getMockSpeechProvider(): SpeechToTextProvider {
   return mock;
 }

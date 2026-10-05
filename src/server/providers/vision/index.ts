@@ -2,7 +2,7 @@ import { getConfig } from "@/lib/config";
 import { findKeywords } from "@/lib/arabic";
 import { CATEGORY_CATALOG } from "@/server/domain/categories";
 import { normalizeCategory, normalizeConfidence, extractJson } from "../ai/parser";
-import { fetchJson } from "../http";
+import { postChatCompletion } from "../http";
 import { GEMINI_DEFAULT_MODEL, geminiGenerate, geminiText } from "../gemini";
 
 export interface ImageInput {
@@ -73,11 +73,10 @@ export class OpenAICompatibleVisionProvider implements VisionProvider {
   ) {}
   async analyzeImage(input: ImageInput): Promise<ImageAnalysis> {
     const dataUrl = `data:${input.mimeType};base64,${input.buffer.toString("base64")}`;
-    const res = await fetchJson<{ choices?: { message?: { content?: string } }[] }>(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      timeoutMs: 45000,
-      headers: { "Content-Type": "application/json", ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}) },
-      body: JSON.stringify({
+    const res = await postChatCompletion<{ choices?: { message?: { content?: string } }[] }>(
+      `${this.baseUrl.replace(/\/$/, "")}/chat/completions`,
+      { timeoutMs: 45000, headers: { "Content-Type": "application/json", ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}) } },
+      {
         model: this.model,
         temperature: 0.1,
         messages: [
@@ -89,8 +88,8 @@ export class OpenAICompatibleVisionProvider implements VisionProvider {
             ],
           },
         ],
-      }),
-    });
+      },
+    );
     return toAnalysis(res.choices?.[0]?.message?.content ?? "", this.name);
   }
 }
@@ -159,6 +158,9 @@ export function getVisionProvider(): VisionProvider {
   return instance;
 }
 
+/** Gemini (free) as a second opinion when another provider fails; otherwise caption-based hints. */
 export function getFallbackVisionProvider(): VisionProvider {
+  const c = getConfig();
+  if (getVisionProvider().name !== "gemini" && c.GEMINI_API_KEY) return new GeminiVisionProvider(GEMINI_DEFAULT_MODEL, c.GEMINI_API_KEY);
   return mock;
 }

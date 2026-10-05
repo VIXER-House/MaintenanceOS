@@ -26,6 +26,15 @@ afterAll(async () => {
   await db.$disconnect();
 });
 
+/** Start each scenario clean: no open tickets in the unit, idle conversation. */
+async function resetResident(r: { id: string; unitId: string | null }) {
+  await db.ticket.updateMany({
+    where: { OR: [{ residentId: r.id }, ...(r.unitId ? [{ unitId: r.unitId }] : [])], status: { notIn: ["CLOSED", "CANCELLED", "COMPLETED"] } },
+    data: { status: "CANCELLED" },
+  });
+  await db.conversation.updateMany({ where: { residentId: r.id }, data: { state: "IDLE", activeTicketId: null, context: {} } });
+}
+
 async function send(phone: string, text: string) {
   const [msg] = await getMockWhatsAppProvider().receiveMessage({ from: phone, type: "text", text });
   return handleInboundMessage(msg, "mock");
@@ -35,7 +44,7 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
   it("creates, classifies, prioritises, SLA-stamps and assigns a ticket from Egyptian Arabic", async () => {
     if (!dbUp) return;
     const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A01-101" } } });
-    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    await resetResident(resident);
     const r = await send(resident.phone, "الكهربا قاطعة في الشقة");
     expect(r.action).toBe("created");
     const t = await db.ticket.findUniqueOrThrow({ where: { id: r.ticketId! }, include: { category: true, events: true } });
@@ -54,7 +63,7 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
   it("asks a follow-up question and escalates to EMERGENCY on 'المياه كتير'", async () => {
     if (!dbUp) return;
     const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A01-102" } } });
-    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    await resetResident(resident);
     const first = await send(resident.phone, "فيه تسريب مياه في المطبخ");
     expect(first.action).toBe("follow_up_requested");
     expect((await db.ticket.findUniqueOrThrow({ where: { id: first.ticketId! } })).status).toBe("WAITING_FOR_INFO");
@@ -72,7 +81,7 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
   it("enforces human-in-the-loop on quotations and the state machine", async () => {
     if (!dbUp) return;
     const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A02-201" } } });
-    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    await resetResident(resident);
     const r = await send(resident.phone, "السخان مش شغال");
     const t = await db.ticket.findUniqueOrThrow({ where: { id: r.ticketId! }, include: { technician: { include: { user: true } } } });
     const tech = actorFromUser({ ...t.technician!.user, technicianId: t.technicianId });
@@ -107,6 +116,8 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
     const wrong = await send(phone, "Z99-999");
     expect(wrong.action).toBe("registration_requested");
 
+    const unit = await db.unit.findUniqueOrThrow({ where: { code: "A02-102" } });
+    await resetResident({ id: "-", unitId: unit.id });
     const ok = await send(phone, "A02-102");
     expect(["created", "follow_up_requested"]).toContain(ok.action);
     const r1 = await db.resident.findUniqueOrThrow({ where: { phone }, include: { unit: true } });
@@ -120,7 +131,7 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
   it("elevator: 'yes, two people' to 'is anyone trapped?' → EMERGENCY; a later reaction is a comment, not a new ticket", async () => {
     if (!dbUp) return;
     const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A02-101" } } });
-    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    await resetResident(resident);
     const first = await send(resident.phone, "لو سمحت عندي مشكلة في اسانسير العماره");
     expect(first.action).toBe("follow_up_requested");
     expect(first.replies[0]).toContain("محبوس");
@@ -139,12 +150,69 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
   it("elevator: 'no, nobody' keeps the normal priority", async () => {
     if (!dbUp) return;
     const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A02-102" } } });
-    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    await resetResident(resident);
     const first = await send(resident.phone, "الاسانسير واقف");
     if (first.action !== "follow_up_requested") return; // the AI may already have enough info
     const answer = await send(resident.phone, "لا مفيش حد جوه");
     const t = await db.ticket.findUniqueOrThrow({ where: { id: answer.ticketId! } });
     expect(t.priority).not.toBe("EMERGENCY");
+  });
+
+  describe("same-type requests", () => {
+    async function freshResident(code: string) {
+      const r = await db.resident.findFirstOrThrow({ where: { unit: { code } } });
+      await resetResident(r);
+      return r;
+    }
+    const openCount = (residentId: string) => db.ticket.count({ where: { residentId, status: { notIn: ["CLOSED", "CANCELLED", "COMPLETED"] } } });
+
+    it("asks 'same or different?' and keeps one ticket when it is the same problem", async () => {
+      if (!dbUp) return;
+      const r = await freshResident("A03-101");
+      const first = await send(r.phone, "حنفية المطبخ بتنقط مياه");
+      expect(first.action).toBe("created");
+      const again = await send(r.phone, "الحنفية بتنقط ومحدش جه");
+      expect(again.action).toBe("duplicate_check");
+      expect(again.ticketId).toBe(first.ticketId);
+      const same = await send(r.phone, "نفس المشكلة");
+      expect(same.action).toBe("duplicate_same");
+      expect(await openCount(r.id)).toBe(1);
+    });
+
+    it("adds a different problem of the same type to the existing ticket", async () => {
+      if (!dbUp) return;
+      const r = await freshResident("A03-101");
+      const first = await send(r.phone, "حنفية المطبخ بتنقط مياه");
+      await send(r.phone, "في تسريب تحت حوض الحمام");
+      const diff = await send(r.phone, "لا مشكلة تانية");
+      expect(diff.action).toBe("issue_added");
+      expect(diff.ticketId).toBe(first.ticketId);
+      const t = await db.ticket.findUniqueOrThrow({ where: { id: first.ticketId! } });
+      expect(t.description).toContain("تسريب تحت حوض الحمام");
+      expect(await openCount(r.id)).toBe(1);
+    });
+
+    it("adds directly when the message says it is another problem, and escalates on emergencies", async () => {
+      if (!dbUp) return;
+      const r = await freshResident("A03-101");
+      const first = await send(r.phone, "حنفية المطبخ بتنقط مياه");
+      const other = await send(r.phone, "وكمان في مشكلة تانية، السيفون في الحمام مش شغال");
+      expect(other.action).toBe("issue_added");
+      const flood = await send(r.phone, "المية بتغرق الأرض في الحمام");
+      expect(flood.action).toBe("issue_added");
+      const t = await db.ticket.findUniqueOrThrow({ where: { id: first.ticketId! } });
+      expect(t.priority).toBe("EMERGENCY");
+      expect(await openCount(r.id)).toBe(1);
+    });
+
+    it("opens a new ticket for a different type", async () => {
+      if (!dbUp) return;
+      const r = await freshResident("A03-101");
+      await send(r.phone, "حنفية المطبخ بتنقط مياه");
+      const elec = await send(r.phone, "الكهربا قاطعة في الأوضة");
+      expect(elec.action).toBe("created");
+      expect(await openCount(r.id)).toBe(2);
+    });
   });
 
   it("runs the full demo scenario end-to-end", async () => {

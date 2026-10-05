@@ -44,3 +44,4 @@ describe("gemini model fallback", () => {
     await expect(geminiGenerate("gemini-flash-latest", "bad", {}, 5000)).rejects.toThrow("HTTP 403 from generativelanguage.googleapis.com: API key not valid");
   });
 });
+

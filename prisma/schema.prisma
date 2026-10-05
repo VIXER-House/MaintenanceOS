@@ -709,3 +709,11 @@ model WhatsAppBridgeSession {
 
   @@map("whatsapp_bridge_session")
 }
+
+/// Manager-editable configuration stored as JSON (e.g. "globalPriorityRules").
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}

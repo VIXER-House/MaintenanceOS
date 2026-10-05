@@ -53,3 +53,8 @@ export async function withRetry<T>(fn: () => Promise<T>, retries = 1, baseDelayM
   }
   throw lastErr;
 }
+
+/** POST an OpenAI-compatible chat completion request. */
+export async function postChatCompletion<T>(url: string, init: RequestInit & { timeoutMs?: number }, body: Record<string, unknown>): Promise<T> {
+  return fetchJson<T>(url, { ...init, method: "POST", body: JSON.stringify(body) });
+}

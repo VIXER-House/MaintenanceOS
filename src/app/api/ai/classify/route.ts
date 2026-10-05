@@ -5,6 +5,7 @@ import { parseBody, route } from "@/server/http/api";
 import { classifyRequest } from "@/server/services/ai.service";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
 import { computeTicketSla } from "@/server/services/sla.service";
+import { getGlobalPriorityRules } from "@/server/services/settings.service";
 import type { PriorityRule } from "@/server/domain/categories";
 import type { Priority } from "@/server/domain/constants";
 
@@ -17,6 +18,7 @@ export const POST = route(async (req) => {
   const outcome = await classifyRequest({ text });
   const category = await db.category.findUnique({ where: { key: outcome.classification.category } });
   const decision = evaluatePriority({
+    globalRules: await getGlobalPriorityRules(),
     text,
     categoryDefault: (category?.defaultPriority as Priority) ?? "MEDIUM",
     categoryRules: (category?.priorityRules as unknown as PriorityRule[]) ?? [],

@@ -1,4 +1,4 @@
-import { fetchJson } from "../http";
+import { postChatCompletion } from "../http";
 import { geminiEffectiveModel, geminiGenerate, geminiText } from "../gemini";
 import { parseClassificationResponse } from "./parser";
 import { CLASSIFY_SYSTEM_PROMPT, buildClassifyUserPrompt, buildReplyPrompt } from "./prompts";
@@ -90,15 +90,17 @@ export class OpenAICompatibleProvider extends LLMProvider {
   }
 
   protected async complete(system: string, user: string, json: boolean): Promise<string> {
-    const res = await fetchJson<ChatCompletionResponse>(`${this.baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      timeoutMs: this.opts.timeoutMs,
-      headers: {
-        "Content-Type": "application/json",
-        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
-        ...(this.name === "openrouter" ? { "HTTP-Referer": "http://localhost:3000", "X-Title": "MaintenanceOS" } : {}),
+    const res = await postChatCompletion<ChatCompletionResponse>(
+      `${this.baseUrl.replace(/\/$/, "")}/chat/completions`,
+      {
+        timeoutMs: this.opts.timeoutMs,
+        headers: {
+          "Content-Type": "application/json",
+          ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+          ...(this.name === "openrouter" ? { "HTTP-Referer": "http://localhost:3000", "X-Title": "MaintenanceOS" } : {}),
+        },
       },
-      body: JSON.stringify({
+      {
         model: this.model,
         temperature: 0.1,
         messages: [
@@ -106,8 +108,8 @@ export class OpenAICompatibleProvider extends LLMProvider {
           { role: "user", content: user },
         ],
         ...(json ? { response_format: { type: "json_object" } } : {}),
-      }),
-    });
+      },
+    );
     const content = res.choices?.[0]?.message?.content;
     if (!content) throw new Error(`${this.name}: empty completion`);
     return content;

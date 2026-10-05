@@ -74,6 +74,9 @@ export type ResponseKind =
   | "registration_unit_not_found"
   | "registration_done"
   | "comment_received"
+  | "duplicate_found"
+  | "duplicate_same"
+  | "issue_added"
   | "voice_failed";
 
 export interface ResponseInput {

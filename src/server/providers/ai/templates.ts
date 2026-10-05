@@ -31,6 +31,11 @@ const AR: Record<ResponseKind, Tpl> = {
   registration_needed: () => `أهلاً بيك 👋 رقمك لسه مش مسجل عندنا.\nابعتلي رقم الوحدة بتاعتك (مثال: A01-101) وهسجلك وأسجل طلبك فوراً.`,
   registration_unit_not_found: (d) => `معلش، مش لاقي وحدة برقم ${d.unit}. اتأكد من الرقم وابعته تاني بالشكل ده: A01-101`,
   registration_done: (d) => `تم تسجيلك على الوحدة ${d.unit} ✅ (هيتم التأكيد من إدارة الكمبوند).`,
+  duplicate_found: (d) =>
+    `عندك بالفعل طلب ${d.category} مفتوح رقم ${d.ticketNumber} (${d.issue}) — الحالة: ${d.status}${d.technician ? ` مع ${d.technician}` : ""}.\nهل دي نفس المشكلة ولا مشكلة تانية؟`,
+  duplicate_same: (d) => `تمام، رسالتك اتضافت على الطلب ${d.ticketNumber} وتم إبلاغ المسؤول. الحالة: ${d.status}.`,
+  issue_added: (d) =>
+    `تمام، أضفت المشكلة الجديدة${d.issue ? ` (${d.issue})` : ""} على نفس الطلب ${d.ticketNumber}${d.technician ? ` و${d.technician} هيبص على الاتنين` : ""}.${d.escalated ? `\nتم رفع الأولوية إلى ${d.priority} — وقت الاستجابة: خلال ${d.sla}` : ""}`,
   comment_received: (d) =>
     `وصلت رسالتك على طلب رقم ${d.ticketNumber} ✅ وتم إبلاغ مسؤول الصيانة.\nالحالة: ${d.status}${d.priority ? ` — الأولوية: ${d.priority}` : ""}${d.technician ? `\nالفني: ${d.technician}` : ""}\nلو في مشكلة جديدة غير دي ابعتها بالتفصيل وهسجلها طلب منفصل.`,
   voice_failed: () => `معلش مقدرتش أسمع الرسالة الصوتية كويس. ممكن تكتبلي المشكلة؟`,
@@ -60,6 +65,11 @@ const EN: Record<ResponseKind, Tpl> = {
   registration_needed: () => `Welcome 👋 Your number isn't registered yet.\nPlease send your unit number (e.g. A01-101) and I'll register you and log your request right away.`,
   registration_unit_not_found: (d) => `Sorry, I couldn't find unit ${d.unit}. Please check and send it like this: A01-101`,
   registration_done: (d) => `You're registered for unit ${d.unit} ✅ (compound management will verify).`,
+  duplicate_found: (d) =>
+    `You already have an open ${d.category} request ${d.ticketNumber} (${d.issue}) — status: ${d.status}${d.technician ? ` with ${d.technician}` : ""}.\nIs this the same problem or a different one?`,
+  duplicate_same: (d) => `Got it — your message was added to request ${d.ticketNumber} and the manager was notified. Status: ${d.status}.`,
+  issue_added: (d) =>
+    `Done — I added the new problem${d.issue ? ` (${d.issue})` : ""} to the same request ${d.ticketNumber}${d.technician ? `; ${d.technician} will check both` : ""}.${d.escalated ? `\nPriority raised to ${d.priority} — response within ${d.sla}` : ""}`,
   comment_received: (d) =>
     `Got your message about request ${d.ticketNumber} ✅ — the maintenance manager has been notified.\nStatus: ${d.status}${d.priority ? ` — priority: ${d.priority}` : ""}${d.technician ? `\nTechnician: ${d.technician}` : ""}\nIf this is a different problem, describe it and I'll log a separate request.`,
   voice_failed: () => `Sorry, I couldn't make out the voice note. Could you type the problem?`,

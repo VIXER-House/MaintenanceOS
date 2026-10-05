@@ -11,6 +11,17 @@ export interface ConversationContext {
   pendingQuestion?: string | null;
   /** First request from an unregistered number, filed once the unit is known */
   pendingRequest?: string | null;
+  /** Waiting for "same problem or a different one?" about an open ticket of the same type */
+  duplicateCheck?: {
+    ticketId: string;
+    text: string;
+    issue?: string | null;
+    aiPriority?: string | null;
+    aiConfidence?: number | null;
+    attachmentIds?: string[];
+    messageId?: string | null;
+    asked?: number;
+  } | null;
   [k: string]: unknown;
 }
 
