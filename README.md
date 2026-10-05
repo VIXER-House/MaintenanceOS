@@ -286,7 +286,7 @@ All options below have a free path:
 | Option | Config | Notes |
 |---|---|---|
 | **Ollama (local, free)** | `AI_PROVIDER=ollama` · `ollama pull qwen2.5:7b` | Qwen 2.5 handles Arabic well; any model works (`AI_MODEL=`) |
-| **Google Gemini (free tier, recommended)** | `AI_PROVIDER=gemini` `VISION_PROVIDER=gemini` `SPEECH_PROVIDER=gemini` · `GEMINI_API_KEY=…` | one key covers text, photos and voice notes; default `gemini-2.5-flash` |
+| **Google Gemini (free tier, recommended)** | `AI_PROVIDER=gemini` `VISION_PROVIDER=gemini` `SPEECH_PROVIDER=gemini` · `GEMINI_API_KEY=…` | one key covers text, photos and voice notes; default `gemini-flash-latest` |
 | **Groq (free tier)** | `AI_PROVIDER=groq` · `AI_API_KEY=gsk_…` | default `openai/gpt-oss-120b` (Llama left Groq's free tier in Aug 2026); Groq also hosts Whisper for `SPEECH_PROVIDER=whisper` |
 | **OpenRouter (free models)** | `AI_PROVIDER=openrouter` · `AI_API_KEY=…` | default `meta-llama/llama-3.3-70b-instruct:free` |
 | OpenAI | `AI_PROVIDER=openai` | paid |

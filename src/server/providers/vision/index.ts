@@ -3,6 +3,7 @@ import { findKeywords } from "@/lib/arabic";
 import { CATEGORY_CATALOG } from "@/server/domain/categories";
 import { normalizeCategory, normalizeConfidence, extractJson } from "../ai/parser";
 import { fetchJson } from "../http";
+import { GEMINI_DEFAULT_MODEL, geminiGenerate, geminiText } from "../gemini";
 
 export interface ImageInput {
   buffer: Buffer;
@@ -101,12 +102,10 @@ export class GeminiVisionProvider implements VisionProvider {
     private readonly apiKey: string,
   ) {}
   async analyzeImage(input: ImageInput): Promise<ImageAnalysis> {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-    const res = await fetchJson<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(url, {
-      method: "POST",
-      timeoutMs: 45000,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await geminiGenerate(
+      this.model,
+      this.apiKey,
+      {
         contents: [
           {
             role: "user",
@@ -117,9 +116,10 @@ export class GeminiVisionProvider implements VisionProvider {
           },
         ],
         generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
-      }),
-    });
-    return toAnalysis(res.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "", this.name);
+      },
+      45000,
+    );
+    return toAnalysis(geminiText(res), this.name);
   }
 }
 
@@ -151,7 +151,7 @@ export function getVisionProvider(): VisionProvider {
         : mock;
       break;
     case "gemini":
-      instance = c.VISION_API_KEY || c.GEMINI_API_KEY ? new GeminiVisionProvider(c.VISION_MODEL || "gemini-2.5-flash", (c.VISION_API_KEY || c.GEMINI_API_KEY)!) : mock;
+      instance = c.VISION_API_KEY || c.GEMINI_API_KEY ? new GeminiVisionProvider(c.VISION_MODEL && c.VISION_MODEL.startsWith("gemini") ? c.VISION_MODEL : GEMINI_DEFAULT_MODEL, (c.VISION_API_KEY || c.GEMINI_API_KEY)!) : mock;
       break;
     default:
       instance = mock;

@@ -1,4 +1,5 @@
 import { fetchJson } from "../http";
+import { geminiEffectiveModel, geminiGenerate, geminiText } from "../gemini";
 import { parseClassificationResponse } from "./parser";
 import { CLASSIFY_SYSTEM_PROMPT, buildClassifyUserPrompt, buildReplyPrompt } from "./prompts";
 import { renderTemplate } from "./templates";
@@ -113,15 +114,15 @@ export class OpenAICompatibleProvider extends LLMProvider {
   }
 }
 
-interface GeminiResponse {
-  candidates?: { content?: { parts?: { text?: string }[] } }[];
-}
-
 /** Google Gemini (has a free tier via Google AI Studio keys) */
 export class GeminiProvider extends LLMProvider {
   readonly name = "gemini";
+  /** Reports the model actually used (Gemini IDs get retired; see ../gemini.ts) */
+  get model() {
+    return geminiEffectiveModel(this.configuredModel);
+  }
   constructor(
-    readonly model: string,
+    private readonly configuredModel: string,
     private readonly apiKey: string,
     opts: { timeoutMs: number; generateReplies?: boolean },
   ) {
@@ -129,18 +130,17 @@ export class GeminiProvider extends LLMProvider {
   }
 
   protected async complete(system: string, user: string, json: boolean): Promise<string> {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-    const res = await fetchJson<GeminiResponse>(url, {
-      method: "POST",
-      timeoutMs: this.opts.timeoutMs,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await geminiGenerate(
+      this.configuredModel,
+      this.apiKey,
+      {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: user }] }],
         generationConfig: { temperature: 0.1, ...(json ? { responseMimeType: "application/json" } : {}) },
-      }),
-    });
-    const text = res.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("");
+      },
+      this.opts.timeoutMs,
+    );
+    const text = geminiText(res);
     if (!text) throw new Error("gemini: empty completion");
     return text;
   }

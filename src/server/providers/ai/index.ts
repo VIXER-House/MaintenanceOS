@@ -11,7 +11,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   groq: "openai/gpt-oss-120b",
   openrouter: "meta-llama/llama-3.3-70b-instruct:free",
   openai: "gpt-4o-mini",
-  gemini: "gemini-2.5-flash",
+  gemini: "gemini-flash-latest", // auto-updating alias; retired IDs fall back to a current Flash model
 };
 
 const DEFAULT_BASE_URLS: Record<string, string> = {

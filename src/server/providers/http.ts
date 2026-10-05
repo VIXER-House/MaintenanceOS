@@ -8,6 +8,17 @@ export class ProviderHttpError extends Error {
   }
 }
 
+/** Short human-readable reason from a provider's JSON error body (never includes request secrets). */
+function providerDetail(text: string): string {
+  try {
+    const j = JSON.parse(text);
+    const msg = j?.error?.message ?? j?.message ?? (typeof j?.error === "string" ? j.error : null);
+    return msg ? `: ${String(msg).slice(0, 200)}` : "";
+  } catch {
+    return "";
+  }
+}
+
 /** fetch with timeout + JSON handling, shared by all HTTP-based providers */
 export async function fetchJson<T = unknown>(url: string, init: RequestInit & { timeoutMs?: number } = {}): Promise<T> {
   const { timeoutMs = 20000, ...rest } = init;
@@ -16,7 +27,7 @@ export async function fetchJson<T = unknown>(url: string, init: RequestInit & { 
   try {
     const res = await fetch(url, { ...rest, signal: controller.signal });
     const text = await res.text();
-    if (!res.ok) throw new ProviderHttpError(`HTTP ${res.status} from ${new URL(url).host}`, res.status, text.slice(0, 500));
+    if (!res.ok) throw new ProviderHttpError(`HTTP ${res.status} from ${new URL(url).host}${providerDetail(text)}`, res.status, text.slice(0, 500));
     return (text ? JSON.parse(text) : {}) as T;
   } catch (e) {
     if (e instanceof ProviderHttpError) throw e;

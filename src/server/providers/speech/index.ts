@@ -1,5 +1,6 @@
 import { getConfig } from "@/lib/config";
 import { fetchJson } from "../http";
+import { GEMINI_DEFAULT_MODEL, geminiGenerate, geminiText } from "../gemini";
 
 export interface AudioInput {
   buffer: Buffer;
@@ -93,12 +94,10 @@ export class GeminiSpeechProvider implements SpeechToTextProvider {
   ) {}
 
   async transcribe(file: AudioInput): Promise<TranscriptionResult> {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`;
-    const res = await fetchJson<{ candidates?: { content?: { parts?: { text?: string }[] } }[] }>(url, {
-      method: "POST",
-      timeoutMs: 60000,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await geminiGenerate(
+      this.model,
+      this.apiKey,
+      {
         contents: [
           {
             role: "user",
@@ -109,9 +108,10 @@ export class GeminiSpeechProvider implements SpeechToTextProvider {
           },
         ],
         generationConfig: { temperature: 0 },
-      }),
-    });
-    const text = res.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("").trim();
+      },
+      60000,
+    );
+    const text = geminiText(res).trim();
     if (!text) throw new Error("gemini: empty transcription");
     return { text, provider: this.name };
   }
@@ -125,7 +125,7 @@ export function getSpeechProvider(): SpeechToTextProvider {
   const c = getConfig();
   const geminiKey = c.SPEECH_API_KEY || c.GEMINI_API_KEY;
   if (c.SPEECH_PROVIDER === "gemini" && geminiKey) {
-    instance = new GeminiSpeechProvider(c.SPEECH_MODEL.startsWith("gemini") ? c.SPEECH_MODEL : "gemini-2.5-flash", geminiKey);
+    instance = new GeminiSpeechProvider(c.SPEECH_MODEL.startsWith("gemini") ? c.SPEECH_MODEL : GEMINI_DEFAULT_MODEL, geminiKey);
   } else if (c.SPEECH_PROVIDER === "whisper" && c.SPEECH_BASE_URL) {
     instance = new WhisperProvider(c.SPEECH_BASE_URL, c.SPEECH_MODEL, c.SPEECH_API_KEY);
   } else {
