@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { Prisma, type Ticket, type TicketEventType, type TicketSource } from "@prisma/client";
 import { db } from "@/lib/db";
+import { isAffirmativeAnswer } from "@/server/domain/answers";
 import { formatTicketNumber, isManager, type Priority, type TicketStatus } from "@/server/domain/constants";
 import { PRIORITY_LABELS, STATUS_LABELS, formatMinutesHuman } from "@/server/domain/labels";
 import type { PriorityRule } from "@/server/domain/categories";
@@ -364,8 +365,11 @@ export async function handleFollowUpAnswer(ticketId: string, answer: string, act
     { role: "resident", text: t.description },
     ...(lastAnalysis?.followUpQuestion ? [{ role: "assistant" as const, text: lastAnalysis.followUpQuestion }] : []),
   ];
-  const outcome = await classifyRequest({ text: answer, history, knownAssets: await knownAssetsFor(t.unitId), disallowFollowUp: true });
-  const combined = `${t.description}\n${answer}`;
+  // A "yes" only carries meaning together with the question: "is anyone trapped?" + "yes, two people"
+  // must be judged as "people trapped" by the safety rules.
+  const confirmedQuestion = lastAnalysis?.followUpQuestion && isAffirmativeAnswer(answer) ? lastAnalysis.followUpQuestion : null;
+  const outcome = await classifyRequest({ text: confirmedQuestion ? `${answer} (answer to: ${confirmedQuestion})` : answer, history, knownAssets: await knownAssetsFor(t.unitId), disallowFollowUp: true });
+  const combined = [t.description, confirmedQuestion ? `${confirmedQuestion} → ${answer}` : answer].join("\n");
   const applied = await applyAnalysis(t.id, outcome, { text: combined, messageId, isFollowUp: true });
   t = await move(applied.ticket, "NEW", AI_ACTOR, "STATUS_CHANGED", "Information complete — ready for dispatch");
   const assignment = await autoAssign(t.id);

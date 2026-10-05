@@ -265,3 +265,8 @@ export class MockAIProvider implements AIProvider {
     return renderTemplate(input);
   }
 }
+
+/** True when the text contains any maintenance vocabulary (a category keyword or symptom). */
+export function hasMaintenanceVocabulary(text: string): boolean {
+  return scoreCategories(text, undefined)[0]?.score > 0;
+}

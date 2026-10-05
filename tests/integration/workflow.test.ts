@@ -117,6 +117,36 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
     expect(t.description).toContain("الحنفية");
   });
 
+  it("elevator: 'yes, two people' to 'is anyone trapped?' → EMERGENCY; a later reaction is a comment, not a new ticket", async () => {
+    if (!dbUp) return;
+    const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A02-101" } } });
+    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    const first = await send(resident.phone, "لو سمحت عندي مشكلة في اسانسير العماره");
+    expect(first.action).toBe("follow_up_requested");
+    expect(first.replies[0]).toContain("محبوس");
+    const answer = await send(resident.phone, "اه في فردين");
+    expect(answer.action).toBe("follow_up_answered");
+    const t = await db.ticket.findUniqueOrThrow({ where: { id: answer.ticketId! } });
+    expect(t.priority).toBe("EMERGENCY");
+    expect(t.slaResponseDueAt!.getTime() - t.createdAt.getTime()).toBeLessThanOrEqual(30 * 60_000 + 5_000);
+    const before = await db.ticket.count({ where: { residentId: resident.id } });
+    const reaction = await send(resident.phone, "ساعتين!!! 😂😂😂");
+    expect(reaction.action).toBe("comment");
+    expect(reaction.ticketId).toBe(t.id);
+    expect(await db.ticket.count({ where: { residentId: resident.id } })).toBe(before);
+  });
+
+  it("elevator: 'no, nobody' keeps the normal priority", async () => {
+    if (!dbUp) return;
+    const resident = await db.resident.findFirstOrThrow({ where: { unit: { code: "A02-102" } } });
+    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null } });
+    const first = await send(resident.phone, "الاسانسير واقف");
+    if (first.action !== "follow_up_requested") return; // the AI may already have enough info
+    const answer = await send(resident.phone, "لا مفيش حد جوه");
+    const t = await db.ticket.findUniqueOrThrow({ where: { id: answer.ticketId! } });
+    expect(t.priority).not.toBe("EMERGENCY");
+  });
+
   it("runs the full demo scenario end-to-end", async () => {
     if (!dbUp) return;
     let ticketId: string | undefined;

@@ -12,6 +12,8 @@ import type { Actor } from "./actor";
 import { classifyRequest } from "./ai.service";
 import { generateReply } from "./ai.service";
 import { notifyRoles } from "./notification.service";
+import { recordEvent } from "./event.service";
+import { hasMaintenanceVocabulary } from "@/server/providers/ai/mock-ai.provider";
 import { ctx, getOrCreateConversation, normalizePhone, sendToResident, updateConversation } from "./messaging.service";
 import { attachmentTypeFor, saveFile } from "./storage.service";
 import {
@@ -37,7 +39,8 @@ export type IntakeAction =
   | "voice_failed"
   | "registration_requested"
   | "registered"
-  | "duplicate";
+  | "duplicate"
+  | "comment";
 
 export interface IntakeResult {
   action: IntakeAction;
@@ -50,6 +53,8 @@ export interface IntakeResult {
 
 const YES = ["تمام", "اه", "ايوه", "ايوة", "نعم", "اتحلت", "اتصلحت", "تمت", "شكرا", "الحمد لله", "yes", "ok", "okay", "fixed", "done", "resolved", "thanks"];
 const NO = ["لسه", "لا", "مش", "متصلحتش", "مازالت", "no", "not", "still", "broken"];
+/** A message without a new problem within this window is treated as a comment on the latest open request. */
+const RECENT_TICKET_MS = 12 * 60 * 60 * 1000;
 const STATUS = ["حاله الطلب", "حاله", "الحاله", "متابعه", "status", "track"];
 
 function isNo(text: string) {
@@ -287,6 +292,37 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     imageFindings: imageFindings.map((f) => ({ issue: f.issue, categoryKey: f.categoryKey, confidence: f.confidence })),
     knownAssets,
   });
+
+  // ── 4a. A reaction to an open request ("ساعتين؟!", "لسه محدش جه", "شكراً") is a comment on
+  //        that ticket, not a new request: no maintenance vocabulary + nothing the AI could classify.
+  if (text && !attachmentIds.length && !hasMaintenanceVocabulary(text)) {
+    const c = outcome.classification;
+    const vague = !c.isMaintenanceRequest || c.category === "OTHER" || c.confidence < 0.6;
+    const recent = vague
+      ? await db.ticket.findFirst({
+          where: { residentId: resident.id, status: { in: OPEN_STATUSES }, updatedAt: { gte: new Date(Date.now() - RECENT_TICKET_MS) } },
+          orderBy: { updatedAt: "desc" },
+        })
+      : null;
+    if (recent) {
+      await db.ticketMessage.update({ where: { id: inbound.id }, data: { ticketId: recent.id } });
+      await recordEvent(recent.id, "NOTE_ADDED", residentActor, `Resident: "${text.slice(0, 300)}"`);
+      await notifyRoles(["MAINTENANCE_MANAGER"], {
+        title: `Resident follow-up on ${recent.ticketNumber}`,
+        body: text.slice(0, 200),
+        link: `/tickets/${recent.id}`,
+        ticketId: recent.id,
+      });
+      const full = await getTicketOrThrow(recent.id);
+      const body = await generateReply({
+        kind: "comment_received",
+        language: lang,
+        data: { ...statusLine(full, lang), priority: PRIORITY_LABELS[full.priority][lang] },
+      });
+      await reply(body, recent.id);
+      return { action: "comment", residentId: resident.id, conversationId: conversation.id, ticketId: recent.id, ticketNumber: recent.ticketNumber, replies: [body] };
+    }
+  }
 
   if (!outcome.classification.isMaintenanceRequest || !requestText) {
     const body = await generateReply({
