@@ -21,6 +21,7 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   getContentType,
   isPnUser,
 } from "baileys";
@@ -73,6 +74,7 @@ let status = { status: "starting" };
 let lastActivity = 0;
 let unlinking = false;
 let generation = 0;
+let failures = 0;
 
 async function report(next) {
   if (next) status = next;
@@ -188,10 +190,32 @@ async function pollOutbox() {
 }
 
 // ─── WhatsApp connection ───────────────────────────────────────────────────
+/**
+ * WhatsApp refuses to pair devices that announce an outdated WA-Web version — the socket
+ * then loops connecting → close and never shows a QR. Read the live version from
+ * web.whatsapp.com first; Baileys' own (often stale) list is only a fallback.
+ * WA_VERSION=2,3000,123456789 overrides both.
+ */
+let waVersion = null;
+async function resolveWaVersion() {
+  if (process.env.WA_VERSION) return process.env.WA_VERSION.split(",").map(Number);
+  if (waVersion) return waVersion;
+  const live = await fetchLatestWaWebVersion().catch(() => null);
+  if (live?.isLatest && live.version) waVersion = live.version;
+  else {
+    const fallback = await fetchLatestBaileysVersion().catch(() => null);
+    waVersion = fallback?.version ?? live?.version;
+    console.warn(`[${ts()}] could not read the live WhatsApp Web version (${live?.error?.message ?? "unknown"}) — using ${waVersion?.join(".") ?? "Baileys default"}`);
+  }
+  if (waVersion) console.log(`[${ts()}] WhatsApp Web version ${waVersion.join(".")}`);
+  return waVersion ?? undefined;
+}
+
+
 async function start() {
   const myGen = ++generation;
   if (!auth) auth = await loadAppAuthState(api, (m) => console.error(`[${ts()}] ${m}`));
-  const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
+  const version = await resolveWaVersion();
   sock = makeWASocket({ version, auth: auth.state, logger, browser: Browsers.windows("MaintenanceOS"), markOnlineOnConnect: false });
   sock.ev.on("creds.update", auth.saveCreds);
   sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
@@ -204,6 +228,7 @@ async function start() {
     if (connection === "connecting" && status.status !== "qr") report({ status: "connecting" });
     if (connection === "open") {
       connected = true;
+      failures = 0;
       const phone = sock.user?.id?.split(":")[0]?.split("@")[0];
       console.log(`\n[${ts()}] ✅ WhatsApp linked as +${phone} — forwarding to ${APP_URL}\n`);
       await auth.flush();
@@ -223,7 +248,9 @@ async function start() {
         setTimeout(start, 2000);
         return;
       }
-      console.warn(`[${ts()}] connection closed (${code ?? "?"}) — reconnecting…`);
+      failures = code === DisconnectReason.restartRequired ? 0 : failures + 1;
+      if (failures % 5 === 0) waVersion = null; // re-read the WhatsApp Web version
+      console.warn(`[${ts()}] connection closed (${code ?? "?"}${lastDisconnect?.error?.message ? ` ${lastDisconnect.error.message}` : ""}) — reconnecting…`);
       if (status.status !== "qr") report({ status: "connecting", error: `connection closed (${code ?? "?"})` });
       setTimeout(start, code === DisconnectReason.restartRequired ? 500 : 3000);
     }
