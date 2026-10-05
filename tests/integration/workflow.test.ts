@@ -62,7 +62,9 @@ describe.runIf(process.env.DATABASE_URL)("WhatsApp → ticket workflow (integrat
     expect(second.action).toBe("follow_up_answered");
     const t = await db.ticket.findUniqueOrThrow({ where: { id: first.ticketId! } });
     expect(t.priority).toBe("EMERGENCY");
-    expect(t.status).toBe("ASSIGNED");
+    // assigned to a plumber, or (all plumbers at capacity) a contractor suggested for the manager
+    if (t.status === "ASSIGNED") expect(t.technicianId ?? t.contractorId).toBeTruthy();
+    else expect(t.suggestedContractorId).toBeTruthy();
     expect(t.slaResponseDueAt!.getTime() - t.createdAt.getTime()).toBe(30 * 60_000);
     expect(second.replies[0]).toContain("طارئة");
   });

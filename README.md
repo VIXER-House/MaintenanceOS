@@ -266,6 +266,10 @@ Business logic is unchanged. Only the adapter differs. Simulator residents keep 
 
 **Production notes:** messages outside the 24-hour customer-service window need **approved templates** (`sendTemplate()` is implemented). Use a permanent System User token, and keep `WHATSAPP_APP_SECRET` set.
 
+### Alternative: QR-code bridge (no Meta or Twilio account)
+
+`whatsapp-bridge/` is a small service that links a normal WhatsApp account by QR code (like WhatsApp Web) and relays messages to the app. Deploy it as a **free Render web service** (root directory `whatsapp-bridge`, start `npm start`) or run it on a PC. The WhatsApp login is stored in the app database (so restarts don't need a re-scan) and the QR code is shown in **Settings → WhatsApp (QR link)**. It is **unofficial**: use a spare number, because WhatsApp can ban automated numbers. App env: `WHATSAPP_PROVIDER=bridge`, `WHATSAPP_BRIDGE_SECRET`, `WHATSAPP_BRIDGE_URL` (the bridge's public URL). Full steps: `whatsapp-bridge/README.md`.
+
 ### Alternative: Twilio WhatsApp Sandbox (no Meta setup)
 
 1. Sign up at <https://www.twilio.com/try-twilio> (free trial, includes test WhatsApp messages).

@@ -3,7 +3,7 @@ import { getMockWhatsAppProvider } from "@/server/providers/whatsapp";
 import { actorFromUser, type Actor } from "./actor";
 import { AppError, NotFoundError } from "./errors";
 import { handleInboundMessage } from "./intake.service";
-import { acknowledgeTicket, approveQuotation, closeTicket, completeTicket, startTicket, submitQuotation } from "./ticket.service";
+import { assignTicket, acknowledgeTicket, approveQuotation, closeTicket, completeTicket, startTicket, submitQuotation } from "./ticket.service";
 
 /**
  * Demo mode: drives the REAL workflow end-to-end, one step per API call, so the UI
@@ -61,6 +61,16 @@ export async function runDemoStep(step: DemoStep, ticketId?: string | null) {
       const r = await inbound(resident.phone, DEMO_TEXT);
       if (!r.ticketId) throw new AppError(`Intake did not create a ticket (${r.action})`);
       await db.ticket.update({ where: { id: r.ticketId }, data: { isDemo: true } });
+      // If every HVAC technician is at capacity the engine only *suggests* a contractor —
+      // in the demo the manager confirms it so the walkthrough can continue.
+      const created = await db.ticket.findUniqueOrThrow({ where: { id: r.ticketId } });
+      if (!created.technicianId && !created.contractorId) {
+        const contractorId =
+          created.suggestedContractorId ??
+          (await db.contractor.findFirst({ where: { isActive: true, category: { key: "HVAC" } } }))?.id;
+        if (!contractorId) throw new AppError("No technician or contractor available for the demo");
+        await assignTicket(r.ticketId, { contractorId }, await managerActor(), "Demo: manager confirmed the suggested contractor");
+      }
       ticketId = r.ticketId;
       log = `Resident ${resident.nameAr ?? resident.name} sent: “${DEMO_TEXT}” → ${r.ticketNumber}`;
       break;

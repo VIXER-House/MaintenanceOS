@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/session";
 
 /** Public endpoints: login, health, and the WhatsApp webhook (Meta must reach it). */
-const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/whatsapp/webhook", "/api/whatsapp/twilio"];
+const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/whatsapp/webhook", "/api/whatsapp/twilio", "/api/whatsapp/bridge"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

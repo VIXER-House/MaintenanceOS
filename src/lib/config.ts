@@ -25,7 +25,11 @@ const ConfigSchema = z.object({
   AI_GENERATE_REPLIES: bool,
   OLLAMA_BASE_URL: z.string().default("http://localhost:11434"),
 
-  WHATSAPP_PROVIDER: z.enum(["mock", "meta", "twilio"]).catch("mock").default("mock"),
+  WHATSAPP_PROVIDER: z.enum(["mock", "meta", "twilio", "bridge"]).catch("mock").default("mock"),
+  /** Shared secret between the app and the PC WhatsApp bridge (whatsapp-bridge/) */
+  WHATSAPP_BRIDGE_SECRET: z.string().optional(),
+  /** Public URL of the cloud bridge (e.g. https://mos-bridge.onrender.com) — lets the app wake it so updates go out instantly */
+  WHATSAPP_BRIDGE_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
   /** Twilio WhatsApp Sandbox (no Meta setup): Console → Messaging → Try it out → Send a WhatsApp message */
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),

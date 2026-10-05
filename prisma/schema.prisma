@@ -684,3 +684,28 @@ model Notification {
   @@index([userId, readAt])
   @@index([role, createdAt])
 }
+
+// ───────────────────────── WhatsApp QR bridge ─────────────────────────
+
+/// Baileys (WhatsApp-Web) login keys, stored here so the cloud bridge survives restarts without re-scanning.
+model WhatsAppAuthKey {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("whatsapp_auth")
+}
+
+/// Single row ("default") describing the bridge: QR to scan, linked number, heartbeat.
+model WhatsAppBridgeSession {
+  id              String   @id @default("default")
+  status          String   @default("offline")
+  qr              String?
+  phone           String?
+  error           String?
+  logoutRequested Boolean  @default(false)
+  lastSeenAt      DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("whatsapp_bridge_session")
+}

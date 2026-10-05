@@ -2,6 +2,7 @@ import type { ActorType, Conversation, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getMockWhatsAppProvider, getWhatsAppProvider, type WhatsAppProvider } from "@/server/providers/whatsapp";
 import type { ResponseInput } from "@/server/providers/ai";
+import { wakeBridge } from "@/server/providers/whatsapp/bridge.provider";
 import { generateReply } from "./ai.service";
 
 export interface ConversationContext {
@@ -81,11 +82,12 @@ export async function sendToResident(
       body,
       provider: result.provider,
       providerMessageId: result.providerMessageId,
-      status: result.status === "FAILED" ? "FAILED" : "SENT",
+      status: result.status === "FAILED" ? "FAILED" : result.status === "QUEUED" ? "QUEUED" : "SENT",
       error: result.error ?? null,
     },
   });
   await db.conversation.update({ where: { id: conversation.id }, data: { lastMessageAt: new Date() } });
+  if (msg.status === "QUEUED" && msg.provider === "bridge") await wakeBridge();
   return msg;
 }
 

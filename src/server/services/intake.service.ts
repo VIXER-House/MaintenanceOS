@@ -292,7 +292,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     const body = await generateReply({
       kind: requestText ? "greeting" : "not_understood",
       language: lang,
-      data: { name: (lang === "ar" ? resident.nameAr : resident.name)?.split(" ")[0], compound: lang === "ar" ? unitInfo.building.compound.nameAr ?? unitInfo.building.compound.name : unitInfo.building.compound.name },
+      data: { name: resident.verified || !(resident.name ?? "").startsWith("WhatsApp ") ? (lang === "ar" ? resident.nameAr : resident.name)?.split(" ")[0] : undefined, compound: lang === "ar" ? unitInfo.building.compound.nameAr ?? unitInfo.building.compound.name : unitInfo.building.compound.name },
     });
     await reply(body);
     return { action: requestText ? "greeting" : "not_understood", residentId: resident.id, conversationId: conversation.id, replies: [body] };
