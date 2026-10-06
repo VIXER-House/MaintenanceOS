@@ -18,6 +18,7 @@ import { recordEvent } from "./event.service";
 import { getOrCreateConversation, sendResidentUpdate, updateConversation, ctx } from "./messaging.service";
 import { notifyRoles, notifyUsers } from "./notification.service";
 import { computeTicketSla } from "./sla.service";
+import { notifyAssignment } from "./staff-whatsapp.service";
 import { getGlobalPriorityRules } from "./settings.service";
 import { recomputeContractorMetrics } from "./contractor.service";
 
@@ -474,19 +475,23 @@ export async function addIssueToTicket(
  * Automatic assignment. Internal technicians are assigned automatically; contractors
  * are only suggested and must be confirmed by a manager (human-in-the-loop).
  */
-export async function autoAssign(ticketId: string): Promise<{ strategy: string; reason: string }> {
+export async function autoAssign(
+  ticketId: string,
+  opts: { why?: string; notifyResident?: boolean } = {},
+): Promise<{ strategy: string; reason: string; technicianName?: string }> {
   const t = await getTicketOrThrow(ticketId);
   const categoryKey = t.category?.key ?? "OTHER";
-  const rec = await getAssignmentRecommendation(categoryKey, t.category?.requiredSkill ?? "GENERAL");
+  // Never offer the job again to someone who already declined it
+  const rec = await getAssignmentRecommendation(categoryKey, t.category?.requiredSkill ?? "GENERAL", { excludeTechnicianIds: t.declinedTechnicianIds });
   if (rec.strategy === "TECHNICIAN" && rec.technician) {
     await assignTicket(
       ticketId,
       { technicianId: rec.technician.technician.id },
       SYSTEM_ACTOR,
-      `Auto-assigned to ${rec.technician.technician.name} (score ${rec.technician.score}: ${rec.technician.reasons.join(", ")})`,
-      { notifyResident: false },
+      `${opts.why ? `${opts.why} — auto-reassigned` : "Auto-assigned"} to ${rec.technician.technician.name} (score ${rec.technician.score}: ${rec.technician.reasons.join(", ")})`,
+      { notifyResident: opts.notifyResident ?? false },
     );
-    return { strategy: rec.strategy, reason: rec.reason };
+    return { strategy: rec.strategy, reason: rec.reason, technicianName: rec.technician.technician.name };
   }
   if (rec.strategy === "CONTRACTOR" && rec.contractor) {
     await db.ticket.update({ where: { id: ticketId }, data: { suggestedContractorId: rec.contractor.contractor.id } });
@@ -537,6 +542,11 @@ export async function assignTicket(
   const contractor = target.contractorId ? await db.contractor.findUnique({ where: { id: target.contractorId } }) : null;
   if (target.technicianId && !tech) throw new NotFoundError("Technician");
   if (target.contractorId && !contractor) throw new NotFoundError("Contractor");
+  if (tech && !tech.isActive) throw new AppError(`${tech.name} is archived and can't receive jobs`, 400, "INACTIVE");
+  if (contractor && !contractor.isActive) throw new AppError(`${contractor.name} is inactive and can't receive jobs`, 400, "INACTIVE");
+  const previous = { technicianId: t.technicianId, contractorId: t.contractorId };
+  // Same person again → nothing to do (no duplicate WhatsApp offer)
+  if ((tech && t.technicianId === tech.id) || (contractor && t.contractorId === contractor.id)) return t;
 
   const assignee = tech?.name ?? contractor!.name;
   const isReassign = !!(t.technicianId || t.contractorId);
@@ -545,6 +555,7 @@ export async function assignTicket(
     contractor: contractor ? { connect: { id: contractor.id } } : { disconnect: true },
     team: tech?.teamId ? { connect: { id: tech.teamId } } : undefined,
     assignedAt: new Date(),
+    assignReminderAt: null,
     suggestedContractorId: contractor ? null : undefined,
   };
   const eventType: TicketEventType = isReassign ? "REASSIGNED" : "ASSIGNED";
@@ -561,6 +572,8 @@ export async function assignTicket(
   }
 
   const updated = await getTicketOrThrow(ticketId);
+  // WhatsApp job offer to the new assignee (+ "job moved" to the previous one)
+  await notifyAssignment(updated.id, previous);
   await notifyUsers(assigneeUserIds(updated), {
     title: `New job ${updated.ticketNumber} · ${updated.priority}`,
     body: `${updated.title}${updated.unit ? ` — unit ${updated.unit.code}` : ""}`,
@@ -572,6 +585,53 @@ export async function assignTicket(
     await sendResidentUpdate(updated.residentId, "assigned", { ticketNumber: updated.ticketNumber, technician: assigneeName(updated, lang) }, updated.id);
   }
   return updated;
+}
+
+/**
+ * The assignee can't do the job (sick, on leave, emergency…). The reason is recorded,
+ * managers are told, and the job goes straight to the next best technician — never back
+ * to anyone who already declined it. If nobody suitable is free, a manager assigns it.
+ */
+export async function declineAssignment(ticketId: string, actor: Actor, reason: string) {
+  const t = await getTicketOrThrow(ticketId);
+  ensureFieldAccess(t, actor);
+  if (!t.technicianId && !t.contractorId) throw new ConflictError("This ticket has no assignee");
+  if (!["ASSIGNED", "ACKNOWLEDGED", "IN_PROGRESS"].includes(t.status)) throw new ConflictError(`A ${t.status} ticket can't be declined`);
+  const why = reason.trim().slice(0, 500);
+  if (why.replace(/[^\p{L}\p{N}]/gu, "").length < 3) throw new AppError("Please give a reason", 400, "VALIDATION_ERROR");
+  const who = t.technician?.name ?? t.contractor?.name ?? actor.name;
+  const declinedTechnicianIds = t.technicianId ? [...new Set([...t.declinedTechnicianIds, t.technicianId])] : t.declinedTechnicianIds;
+
+  await db.$transaction(async (tx) => {
+    await tx.ticket.update({ where: { id: t.id }, data: { declinedTechnicianIds } });
+    await recordEvent(t.id, "DECLINED", actor, `${who} can't take this job: “${why}”`, { technicianId: t.technicianId, contractorId: t.contractorId, reason: why }, tx);
+  });
+  await notifyRoles(["MAINTENANCE_MANAGER"], {
+    title: `${who} declined ${t.ticketNumber}`,
+    body: `Reason: ${why}`,
+    link: `/tickets/${t.id}`,
+    ticketId: t.id,
+  });
+
+  // Next best technician (contractors are only suggested — a manager confirms them)
+  const r = await autoAssign(t.id, { why: `${who} declined (${why})`, notifyResident: true });
+  if (r.strategy === "TECHNICIAN" && r.technicianName) return { reassignedTo: r.technicianName, ticket: await getTicketOrThrow(t.id) };
+
+  // Nobody free: take it off the person who declined and leave it for a manager
+  const fresh = await getTicketOrThrow(t.id);
+  await move(fresh, "NEW", SYSTEM_ACTOR, "STATUS_CHANGED", "Unassigned after decline — waiting for a manager to assign", {
+    technician: { disconnect: true },
+    contractor: { disconnect: true },
+    assignedAt: null,
+    assignReminderAt: null,
+  });
+  await notifyRoles(["MAINTENANCE_MANAGER", "COMPOUND_MANAGER"], {
+    title: `Reassign ${t.ticketNumber} — no technician available`,
+    body: `${who} declined (${why}). ${r.reason}`,
+    link: `/tickets/${t.id}`,
+    ticketId: t.id,
+  });
+  return { reassignedTo: null, ticket: await getTicketOrThrow(t.id) };
 }
 
 export async function acknowledgeTicket(ticketId: string, actor: Actor) {

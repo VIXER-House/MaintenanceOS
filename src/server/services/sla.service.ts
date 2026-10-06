@@ -47,6 +47,7 @@ export async function sweepSlaBreaches(force = false): Promise<number> {
     await db.ticket.update({ where: { id: t.id }, data: { slaResolutionBreached: true } });
     await recordEvent(t.id, "SLA_BREACHED", SYSTEM_ACTOR, "Resolution SLA breached", { clock: "resolution" });
   }
+  await remindSilentAssignees(now);
   const urgent = [...responseBreaches, ...resolutionBreaches].filter((t) => ["EMERGENCY", "CRITICAL", "HIGH"].includes(t.priority));
   for (const t of urgent.slice(0, 10)) {
     await notifyRoles(["MAINTENANCE_MANAGER"], {
@@ -57,4 +58,42 @@ export async function sweepSlaBreaches(force = false): Promise<number> {
     });
   }
   return responseBreaches.length + resolutionBreaches.length;
+}
+
+/**
+ * Assigned but no answer: once half of the response window has passed (at least 10 min),
+ * remind the assignee on WhatsApp and tell the managers — they can reassign from the ticket.
+ */
+async function remindSilentAssignees(now: Date) {
+  const candidates = await db.ticket.findMany({
+    where: {
+      // ASSIGNED = waiting for the (new) assignee to accept, also after a reassignment
+      status: "ASSIGNED",
+      assignReminderAt: null,
+      assignedAt: { lt: new Date(now.getTime() - 10 * 60_000) },
+      OR: [{ technicianId: { not: null } }, { contractorId: { not: null } }],
+    },
+    select: { id: true, ticketNumber: true, priority: true, assignedAt: true, slaResponseDueAt: true, technician: { select: { name: true } }, contractor: { select: { name: true } } },
+    take: 50,
+  });
+  const due = candidates.filter((t) => {
+    if (!t.assignedAt) return false;
+    const window = t.slaResponseDueAt ? t.slaResponseDueAt.getTime() - t.assignedAt.getTime() : 60 * 60_000;
+    return now.getTime() - t.assignedAt.getTime() >= Math.max(10 * 60_000, window / 2);
+  });
+  if (!due.length) return;
+  const { sendAssignmentReminder } = await import("./staff-whatsapp.service");
+  for (const t of due) {
+    const claimed = await db.ticket.updateMany({ where: { id: t.id, assignReminderAt: null }, data: { assignReminderAt: now } });
+    if (claimed.count !== 1) continue; // another request already sent it
+    const who = t.technician?.name ?? t.contractor?.name ?? "The assignee";
+    await sendAssignmentReminder(t.id).catch((e) => console.error("[sla] reminder failed", e));
+    await recordEvent(t.id, "REMINDER_SENT", SYSTEM_ACTOR, `${who} hasn't answered yet — WhatsApp reminder sent`);
+    await notifyRoles(["MAINTENANCE_MANAGER"], {
+      title: `No answer on ${t.ticketNumber}`,
+      body: `${who} hasn't accepted the ${t.priority.toLowerCase()} job yet. Reassign it if needed.`,
+      link: `/tickets/${t.id}`,
+      ticketId: t.id,
+    });
+  }
 }

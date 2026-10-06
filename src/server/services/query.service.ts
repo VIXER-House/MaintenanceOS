@@ -261,8 +261,9 @@ export async function getTicketDetail(id: string, user: SessionUser) {
             id: r.technician.id,
             name: r.technician.name,
             score: r.score,
-            eligible: r.eligible,
-            reasons: r.reasons,
+            // People who already said they can't do this job are flagged (a manager can still pick them)
+            eligible: r.eligible && !t.declinedTechnicianIds.includes(r.technician.id),
+            reasons: t.declinedTechnicianIds.includes(r.technician.id) ? ["declined this job", ...r.reasons] : r.reasons,
             openTickets: r.technician.openTickets,
           })),
           contractors: recommendation.rankedContractors.filter((c) => c.eligible).slice(0, 4).map((r) => ({

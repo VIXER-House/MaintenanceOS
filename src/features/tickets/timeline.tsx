@@ -2,7 +2,7 @@
 
 import {
   AlertTriangle, Bot, Check, CheckCheck, ClipboardCheck, ClipboardList, Clock, FileEdit, Flag, Lock, MessageCircle, Package,
-  PencilLine, Play, PlusCircle, RotateCcw, ShieldCheck, Sparkles, StickyNote, ThumbsUp, UserCheck, UserPlus, X, Ban, HelpCircle,
+  PencilLine, Play, PlusCircle, RotateCcw, ShieldCheck, Sparkles, StickyNote, ThumbsUp, UserCheck, UserPlus, X, Ban, HelpCircle, UserX, BellRing,
 } from "lucide-react";
 import { useI18n } from "@/lib/i18n/client";
 import { formatDateTime } from "@/lib/format";
@@ -21,6 +21,8 @@ const ICON: Record<string, [React.ElementType, string]> = {
   SLA_BREACHED: [AlertTriangle, "bg-red-100 text-red-700"],
   ASSIGNED: [UserPlus, "bg-blue-100 text-blue-700"],
   REASSIGNED: [UserPlus, "bg-blue-100 text-blue-700"],
+  DECLINED: [UserX, "bg-red-100 text-red-700"],
+  REMINDER_SENT: [BellRing, "bg-amber-100 text-amber-700"],
   ACKNOWLEDGED: [UserCheck, "bg-indigo-100 text-indigo-700"],
   STARTED: [Play, "bg-teal-100 text-teal-700"],
   QUOTATION_REQUESTED: [ClipboardList, "bg-yellow-100 text-yellow-800"],

@@ -9,8 +9,8 @@ export const TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   AI_ANALYZING: ["NEW", "WAITING_FOR_INFO", "ASSIGNED", "CANCELLED"],
   WAITING_FOR_INFO: ["AI_ANALYZING", "NEW", "ASSIGNED", "CANCELLED"],
   ASSIGNED: ["ACKNOWLEDGED", "NEW", "CANCELLED"],
-  ACKNOWLEDGED: ["IN_PROGRESS", "WAITING_QUOTATION", "ASSIGNED", "CANCELLED"],
-  IN_PROGRESS: ["WAITING_QUOTATION", "WAITING_APPROVAL", "COMPLETED", "ASSIGNED", "CANCELLED"],
+  ACKNOWLEDGED: ["IN_PROGRESS", "WAITING_QUOTATION", "ASSIGNED", "NEW", "CANCELLED"],
+  IN_PROGRESS: ["WAITING_QUOTATION", "WAITING_APPROVAL", "COMPLETED", "ASSIGNED", "NEW", "CANCELLED"],
   WAITING_QUOTATION: ["WAITING_APPROVAL", "IN_PROGRESS", "CANCELLED"],
   WAITING_APPROVAL: ["APPROVED", "REJECTED", "WAITING_QUOTATION"],
   APPROVED: ["IN_PROGRESS", "CANCELLED"],
@@ -55,7 +55,8 @@ export type TicketAction =
   | "close"
   | "cancel"
   | "reopen"
-  | "changePriority";
+  | "changePriority"
+  | "decline";
 
 /** Which status a given action moves the ticket to (null = status unchanged) */
 export const ACTION_TARGET: Partial<Record<TicketAction, TicketStatus>> = {
@@ -73,7 +74,7 @@ export const ACTION_TARGET: Partial<Record<TicketAction, TicketStatus>> = {
   reopen: "IN_PROGRESS",
 };
 
-const FIELD_ACTIONS: TicketAction[] = ["acknowledge", "start", "requestQuotation", "submitQuotation", "complete"];
+const FIELD_ACTIONS: TicketAction[] = ["acknowledge", "start", "requestQuotation", "submitQuotation", "complete", "decline"];
 const MANAGER_ONLY: TicketAction[] = ["assign", "approve", "reject", "requestRevision", "close", "cancel", "reopen", "changePriority"];
 
 /**
@@ -107,5 +108,7 @@ export function availableActions(status: TicketStatus, role: Role, isAssignee = 
   consider("reopen", status === "COMPLETED");
   consider("cancel", can("CANCELLED"));
   consider("changePriority", !isTerminal(status));
+  // Only the assignee can say "I can't do this one" (managers reassign instead)
+  consider("decline", isAssignee && ["ASSIGNED", "ACKNOWLEDGED", "IN_PROGRESS"].includes(status));
   return out;
 }

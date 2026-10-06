@@ -47,6 +47,7 @@ export function ActionBar({ ticket, role }: { ticket: TicketDetail; role: Role }
           {spin("acknowledge") ?? <Check />} {t.actions.acknowledge}
         </Button>
       )}
+      {a.includes("decline") && <DeclineDialog ticketId={ticket.id} />}
       {a.includes("start") && (
         <Button variant={a.includes("acknowledge") ? "outline" : "default"} onClick={() => run("start", {}, t.actions.start)} disabled={!!busy}>
           {spin("start") ?? <Play />} {t.actions.start}
@@ -294,6 +295,33 @@ export function QuotationReview({ ticket, quotationId }: { ticket: TicketDetail;
   );
 }
 
+function DeclineDialog({ ticketId }: { ticketId: string }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const { run, busy } = useAction(ticketId);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="text-red-700"><Ban /> {t.actions.decline}</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t.actions.declineTitle}</DialogTitle>
+          <DialogDescription>{t.actions.declineHint}</DialogDescription>
+        </DialogHeader>
+        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t.actions.declineReason} dir="auto" />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>{t.common.cancel}</Button>
+          <Button disabled={!!busy || reason.trim().length < 3} onClick={async () => (await run("decline", { reason }, t.actions.declined)) && setOpen(false)}>
+            {busy && <Loader2 className="animate-spin" />} {t.actions.decline}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function AssignDialog({ ticket, preset, label }: { ticket: TicketDetail; preset?: { technicianId?: string; contractorId?: string }; label?: string }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -346,7 +374,14 @@ export function AssignDialog({ ticket, preset, label }: { ticket: TicketDetail; 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>{t.common.cancel}</Button>
-          <Button disabled={!!busy || (!choice.technicianId && !choice.contractorId)} onClick={async () => (await run("assign", choice, t.actions.assign)) && setOpen(false)}>
+          <Button
+            disabled={!!busy || (!choice.technicianId && !choice.contractorId)}
+            onClick={async () => {
+              const pick = rec?.technicians.find((r) => r.id === choice.technicianId);
+              if (pick && !pick.eligible && !window.confirm(t.actions.unavailableConfirm.replace("{name}", pick.name).replace("{why}", pick.reasons.join(" · ")))) return;
+              if (await run("assign", choice, t.actions.assign)) setOpen(false);
+            }}
+          >
             {busy && <Loader2 className="animate-spin" />} {t.actions.assign}
           </Button>
         </DialogFooter>

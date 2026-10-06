@@ -15,6 +15,7 @@ import { notifyRoles } from "./notification.service";
 import { recordEvent } from "./event.service";
 import { hasMaintenanceVocabulary as hasVocab } from "@/server/providers/ai/mock-ai.provider";
 import { getActiveCategoryCatalog } from "./category-catalog.service";
+import { findStaffByPhone, handleStaffMessage, parseStaffReply } from "./staff-whatsapp.service";
 import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
 import { findUnitInText, guessUnitAttempt } from "@/server/domain/unit-codes";
@@ -52,6 +53,7 @@ export type IntakeAction =
   | "registered"
   | "duplicate"
   | "comment"
+  | "staff"
   | "duplicate_check"
   | "duplicate_same"
   | "issue_added";
@@ -104,6 +106,17 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   }
 
   const phone = normalizePhone(msg.from);
+
+  // Technicians / contractors answering job offers ("1" accept, "2 + reason" can't come)
+  const staff = await findStaffByPhone(phone);
+  if (staff) {
+    const alsoResident = await db.resident.findFirst({ where: { phone, isActive: true, unitId: { not: null } }, select: { id: true } });
+    if (!alsoResident || parseStaffReply(msg.text ?? "").kind !== "unknown") {
+      const r = await handleStaffMessage(staff, msg, providerName);
+      return { action: "staff", replies: r.replies, ticketNumber: r.ticketNumber };
+    }
+  }
+
   const residentInclude = { unit: { include: { building: { include: { compound: true } } } } } as const;
   let resident = await db.resident.findFirst({ where: { phone }, include: residentInclude });
 

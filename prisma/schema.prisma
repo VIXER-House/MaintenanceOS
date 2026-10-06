@@ -91,6 +91,8 @@ enum TicketEventType {
   MESSAGE_SENT
   NOTE_ADDED
   ASSET_HISTORY_UPDATED
+  DECLINED
+  REMINDER_SENT
 }
 
 enum ActorType {
@@ -429,6 +431,10 @@ model Ticket {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   assignedAt     DateTime?
+  /// Technicians who declined this job — never auto-assigned to it again
+  declinedTechnicianIds String[] @default([])
+  /// When the assignee was reminded for not answering (one reminder per assignment)
+  assignReminderAt      DateTime?
   acknowledgedAt DateTime?
   startedAt      DateTime?
   completedAt    DateTime?
@@ -495,6 +501,8 @@ model TicketMessage {
   senderType        ActorType
   senderName        String?
   body              String
+  /// Recipient phone for messages to staff (technicians/contractors) — not part of a resident conversation
+  toPhone           String?
   mediaType         AttachmentType?
   mediaUrl          String?
   transcript        String?

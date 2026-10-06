@@ -3,10 +3,10 @@ import { ACTIVE_WORK_STATUSES } from "@/server/domain/constants";
 import { recommendAssignment, type AssignmentRecommendation } from "@/server/engines/assignment/assignment-engine";
 
 /** Loads live workload/availability from the DB and runs the assignment engine. */
-export async function getAssignmentRecommendation(categoryKey: string, requiredSkill: string): Promise<AssignmentRecommendation> {
+export async function getAssignmentRecommendation(categoryKey: string, requiredSkill: string, opts: { excludeTechnicianIds?: string[] } = {}): Promise<AssignmentRecommendation> {
   const [technicians, contractors] = await Promise.all([
     db.technician.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...(opts.excludeTechnicianIds?.length ? { id: { notIn: opts.excludeTechnicianIds } } : {}) },
       include: { _count: { select: { tickets: { where: { status: { in: ACTIVE_WORK_STATUSES } } } } } },
     }),
     db.contractor.findMany({

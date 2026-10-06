@@ -2,7 +2,7 @@ import { z } from "zod";
 import { requireApiUser } from "@/lib/auth";
 import { parseBody, route } from "@/server/http/api";
 import { AppError } from "@/server/services/errors";
-import { CATEGORY_KEYS, PRIORITIES } from "@/server/domain/constants";
+import { PRIORITIES } from "@/server/domain/constants";
 import * as tickets from "@/server/services/ticket.service";
 
 /**
@@ -46,7 +46,7 @@ const schemas = {
   reopen: notes,
   priority: z.object({ priority: z.enum(PRIORITIES), reason: z.string().max(500).optional().nullable() }),
   analysis: z.object({
-    categoryKey: z.enum(CATEGORY_KEYS).optional(),
+    categoryKey: z.string().trim().min(2).max(40).optional(),
     priority: z.enum(PRIORITIES).optional(),
     title: z.string().trim().min(3).max(120).optional(),
     location: z.string().max(80).optional().nullable(),
@@ -54,6 +54,7 @@ const schemas = {
     recommendedAction: z.string().max(200).optional().nullable(),
   }),
   notes: z.object({ note: z.string().trim().min(1).max(1000) }),
+  decline: z.object({ reason: z.string().trim().min(3, "Please give a reason").max(500) }),
 } as const;
 
 type Action = keyof typeof schemas;
@@ -69,6 +70,7 @@ export const POST = route(async (req, { id, action }) => {
   switch (a) {
     case "assign": result = await tickets.assignTicket(id, body, actor); break;
     case "acknowledge": result = await tickets.acknowledgeTicket(id, actor); break;
+    case "decline": result = await tickets.declineAssignment(id, actor, body.reason); break;
     case "start": result = await tickets.startTicket(id, actor); break;
     case "request-quotation": result = await tickets.requestQuotation(id, actor, body.notes ?? undefined); break;
     case "quotation": result = (await tickets.submitQuotation(id, body, actor)).ticket; break;
