@@ -12,7 +12,7 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
   const ticket = await getTicketDetail(id, user);
   if (!ticket) notFound();
   const [categories, assets] = await Promise.all([
-    db.category.findMany({ orderBy: { sortOrder: "asc" }, select: { key: true, nameEn: true, nameAr: true } }),
+    db.category.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" }, select: { key: true, nameEn: true, nameAr: true } }),
     db.asset.findMany({ orderBy: { assetCode: "asc" }, select: { id: true, assetCode: true, name: true } }),
   ]);
   return <TicketDetailView ticket={ticket} role={user.role} categories={categories} assets={assets} />;

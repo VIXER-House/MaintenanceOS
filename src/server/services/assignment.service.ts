@@ -6,6 +6,7 @@ import { recommendAssignment, type AssignmentRecommendation } from "@/server/eng
 export async function getAssignmentRecommendation(categoryKey: string, requiredSkill: string): Promise<AssignmentRecommendation> {
   const [technicians, contractors] = await Promise.all([
     db.technician.findMany({
+      where: { isActive: true },
       include: { _count: { select: { tickets: { where: { status: { in: ACTIVE_WORK_STATUSES } } } } } },
     }),
     db.contractor.findMany({

@@ -1,13 +1,16 @@
 import { CATEGORY_CATALOG } from "@/server/domain/categories";
 import { CLASSIFICATION_JSON_SHAPE } from "./parser";
-import type { MaintenanceInput, ResponseInput } from "./types";
+import type { CategoryCatalogEntry, MaintenanceInput, ResponseInput } from "./types";
 
-export const CLASSIFY_SYSTEM_PROMPT = `You are the triage engine of MaintenanceOS, a maintenance management system for residential compounds in Egypt.
+export function buildClassifySystemPrompt(categories?: CategoryCatalogEntry[]): string {
+  const list = categories?.length ? categories : CATEGORY_CATALOG;
+  const shape = { ...CLASSIFICATION_JSON_SHAPE, category: list.map((c) => c.key).join(" | ") };
+  return `You are the triage engine of MaintenanceOS, a maintenance management system for residential compounds in Egypt.
 Residents write in Egyptian Arabic (عامية مصرية), Modern Standard Arabic or English, often informally and with typos.
 Classify the maintenance request and extract entities. Respond with ONE JSON object and nothing else.
 
 Categories (use the KEY):
-${CATEGORY_CATALOG.map((c) => `- ${c.key}: ${c.nameEn} / ${c.nameAr} — ${c.description}`).join("\n")}
+${list.map((c) => `- ${c.key}: ${c.nameEn} / ${c.nameAr} — ${c.description}`).join("\n")}
 
 Priorities:
 - EMERGENCY: risk to life/property right now (burst pipe, flooding, fire, smoke, gas smell, sparks, person trapped in elevator)
@@ -23,12 +26,15 @@ Rules:
 - Greetings or thanks alone are NOT maintenance requests (isMaintenanceRequest=false).
 
 JSON shape:
-${JSON.stringify(CLASSIFICATION_JSON_SHAPE, null, 2)}
+${JSON.stringify(shape, null, 2)}
 
 Examples:
 "المياه بتسرب من سقف الحمام" → {"category":"PLUMBING","priority":"HIGH","issue":"Water leakage","issueAr":"تسريب مياه","location":"Bathroom","assetType":"Pipe","recommendedAction":"Dispatch plumber", ...}
 "التكييف في أوضة النوم مش بيبرد" → {"category":"HVAC","priority":"MEDIUM","issue":"Cooling failure","location":"Bedroom","assetType":"AC","recommendedAction":"Send HVAC technician", ...}
 "الأسانسير واقف" → {"category":"ELEVATOR","priority":"CRITICAL","needsMoreInfo":true,"followUpQuestion":"هل في حد محبوس جوه الأسانسير دلوقتي؟", ...}`;
+}
+
+export const CLASSIFY_SYSTEM_PROMPT = buildClassifySystemPrompt();
 
 export function buildClassifyUserPrompt(input: MaintenanceInput): string {
   const parts: string[] = [];

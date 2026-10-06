@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   Bell, Boxes, Building, ClipboardList, Cog, HardHat, Languages, LayoutDashboard, LogOut, Menu, MessageCircle,
-  PlayCircle, Truck, Users, Wrench, X, Inbox, FileSpreadsheet,
+  PlayCircle, Truck, Users, Wrench, X, Inbox, FileSpreadsheet, UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n, useSetLocale } from "@/lib/i18n/client";
@@ -52,6 +52,7 @@ export function AppShell({
         { href: "/contractors", label: t.nav.contractors, icon: Truck, roles: MANAGERS },
         { href: "/assets", label: t.nav.assets, icon: Boxes, roles: [...MANAGERS, "TECHNICIAN"] },
         { href: "/residents", label: t.nav.residents, icon: Users, roles: MANAGERS },
+        { href: "/units", label: t.nav.units, icon: Building, roles: MANAGERS },
       ],
     },
     {
@@ -59,6 +60,7 @@ export function AppShell({
       items: [
         { href: "/notifications", label: t.nav.notifications, icon: Bell },
         { href: "/import", label: t.nav.import, icon: FileSpreadsheet, roles: MANAGERS },
+        { href: "/users", label: t.nav.users, icon: UserCog, roles: MANAGERS },
         { href: "/settings", label: t.nav.settings, icon: Cog, roles: MANAGERS },
       ],
     },

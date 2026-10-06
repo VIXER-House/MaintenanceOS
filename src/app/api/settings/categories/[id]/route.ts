@@ -1,9 +1,10 @@
+import { z } from "zod";
 import { MANAGERS, requireApiUser } from "@/lib/auth";
 import { parseBody, route } from "@/server/http/api";
-import { CategoryUpdateSchema, updateCategory } from "@/server/services/settings.service";
+import { updateRecord } from "@/server/services/manage.service";
 
-/** Managers edit a category: names, default priority, SLA, skill, quotation threshold and keyword rules. */
+/** Managers edit a category: names, description, keywords, default priority, SLA, skill, quotation threshold and keyword rules. */
 export const PATCH = route(async (req, { id }) => {
-  await requireApiUser(MANAGERS);
-  return { category: await updateCategory(id, await parseBody(req, CategoryUpdateSchema)) };
+  const { actor } = await requireApiUser(MANAGERS);
+  return { category: await updateRecord("categories", id, await parseBody(req, z.unknown()), actor) };
 });

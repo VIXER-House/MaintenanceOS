@@ -29,6 +29,7 @@ export interface ContractorPerformance {
   nameAr: string | null;
   category: string | null;
   categoryAr: string | null;
+  categoryKey: string | null;
   phone: string;
   email: string | null;
   rating: number;
@@ -64,6 +65,7 @@ export async function getContractorPerformance(): Promise<ContractorPerformance[
         nameAr: c.nameAr,
         category: c.category?.nameEn ?? null,
         categoryAr: c.category?.nameAr ?? null,
+        categoryKey: c.category?.key ?? null,
         phone: c.phone,
         email: c.email,
         rating: c.rating,

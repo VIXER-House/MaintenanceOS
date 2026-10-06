@@ -10,7 +10,9 @@ type Ctx = { params: Promise<Record<string, string>> };
 /** Uniform JSON error contract: { error: { code, message, details? } } */
 export function errorResponse(e: unknown) {
   if (e instanceof ZodError) {
-    return NextResponse.json({ error: { code: "VALIDATION_ERROR", message: "Invalid request", details: e.flatten() } }, { status: 400 });
+    const first = e.issues[0];
+    const message = first ? `${first.path.length ? `${first.path.join(".")}: ` : ""}${first.message}` : "Invalid request";
+    return NextResponse.json({ error: { code: "VALIDATION_ERROR", message, details: e.flatten() } }, { status: 400 });
   }
   if (e instanceof InvalidTransitionError) {
     return NextResponse.json({ error: { code: e.code, message: e.message } }, { status: 409 });

@@ -13,7 +13,8 @@ import { classifyRequest } from "./ai.service";
 import { generateReply } from "./ai.service";
 import { notifyRoles } from "./notification.service";
 import { recordEvent } from "./event.service";
-import { hasMaintenanceVocabulary } from "@/server/providers/ai/mock-ai.provider";
+import { hasMaintenanceVocabulary as hasVocab } from "@/server/providers/ai/mock-ai.provider";
+import { getActiveCategoryCatalog } from "./category-catalog.service";
 import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
 import { findUnitInText, guessUnitAttempt } from "@/server/domain/unit-codes";
@@ -106,6 +107,16 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   const residentInclude = { unit: { include: { building: { include: { compound: true } } } } } as const;
   let resident = await db.resident.findFirst({ where: { phone }, include: residentInclude });
 
+  // Archived resident (moved out) writes again → treat as a new person: re-register, manager verifies
+  if (resident && !resident.isActive) {
+    resident = await db.resident.update({
+      where: { id: resident.id },
+      data: { isActive: true, verified: false, unitId: null },
+      include: residentInclude,
+    });
+    await db.conversation.updateMany({ where: { residentId: resident.id }, data: { state: "IDLE", activeTicketId: null, context: {} } });
+  }
+
   // Unknown number → create an unverified resident and start self-registration
   if (!resident) {
     const fallbackName = msg.profileName?.trim() || `WhatsApp ${phone.slice(-4)}`;
@@ -192,6 +203,8 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   }
 
   let text = [msg.text, transcript].filter(Boolean).join("\n").trim();
+  const catalog = await getActiveCategoryCatalog().catch(() => undefined);
+  const hasMaintenanceVocabulary = (t: string) => hasVocab(t, catalog);
   const reply = async (body: string, ticketId?: string | null) => {
     await sendToResident(resident!.id, body, { ticketId });
     return body;

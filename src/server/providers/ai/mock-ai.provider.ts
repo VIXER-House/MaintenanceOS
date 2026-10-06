@@ -109,25 +109,28 @@ const MINOR = ["بسيط", "خفيف", "شويه", "حاجه بسيطه", "نق�
 const GREETINGS = ["السلام عليكم", "سلام", "اهلا", "مرحبا", "صباح الخير", "مساء الخير", "hi", "hello", "hey", "شكرا", "thanks", "thank you"];
 const DEVICE_CATEGORIES: CategoryKey[] = ["ELEVATOR", "HVAC", "APPLIANCES", "SECURITY"];
 
-function scoreCategories(text: string, imageFindings: MaintenanceInput["imageFindings"]) {
+function scoreCategories(text: string, imageFindings: MaintenanceInput["imageFindings"], categories?: MaintenanceInput["categories"]) {
   const n = normalizeArabic(text);
-  const scores = CATEGORY_CATALOG.filter((c) => c.key !== "OTHER").map((c) => {
+  // Active categories from the database (incl. ones managers added); built-in list otherwise
+  const list: { key: string; keywords: string[]; builtIn?: boolean }[] = categories?.length ? categories : CATEGORY_CATALOG;
+  const scores = list.filter((c) => c.key !== "OTHER").map((c) => {
     const hits = c.keywords.filter((k) => matchKeyword(n, k));
-    let score = hits.length;
-    if (hits.length && DEVICE_CATEGORIES.includes(c.key)) score += 1.5;
+    // Categories a manager added are specific ("البيسين") — they beat generic words ("مياه")
+    let score = hits.length * (c.builtIn === false ? 2.5 : 1);
+    if (hits.length && (DEVICE_CATEGORIES as string[]).includes(c.key)) score += 1.5;
     for (const f of imageFindings ?? []) if (f.categoryKey === c.key) score += 2 * f.confidence;
     return { key: c.key, score, hits };
   });
   return scores.sort((a, b) => b.score - a.score);
 }
 
-function pickIssue(category: CategoryKey, text: string): IssuePattern | null {
+function pickIssue(category: string, text: string): IssuePattern | null {
   const n = normalizeArabic(text);
-  for (const p of ISSUES[category] ?? []) if (p.keywords.some((k) => matchKeyword(n, k))) return p;
+  for (const p of ISSUES[category as CategoryKey] ?? []) if (p.keywords.some((k: string) => matchKeyword(n, k))) return p;
   return null;
 }
 
-function extract(input: MaintenanceInput, category?: CategoryKey): ExtractedMaintenanceData {
+function extract(input: MaintenanceInput, category?: string): ExtractedMaintenanceData {
   const text = fullText(input);
   const n = normalizeArabic(text);
   const loc = LOCATIONS.find((l) => l.keywords.some((k) => matchKeyword(n, k)));
@@ -173,14 +176,21 @@ export class MockAIProvider implements AIProvider {
   async classifyMaintenanceRequest(input: MaintenanceInput): Promise<MaintenanceClassification> {
     const text = fullText(input);
     const language = input.language ?? detectLanguage(input.text);
-    const ranked = scoreCategories(text, input.imageFindings);
+    const ranked = scoreCategories(text, input.imageFindings, input.categories);
     const top = ranked[0];
     const second = ranked[1];
     const n = normalizeArabic(text);
     const isGreetingOnly = top.score === 0 && GREETINGS.some((g) => matchKeyword(n, g));
 
-    const category: CategoryKey = top.score > 0 ? top.key : "OTHER";
-    const def = CATEGORY_BY_KEY[category];
+    const category: string = top.score > 0 ? top.key : "OTHER";
+    const custom = input.categories?.find((c) => c.key === category);
+    // Built-in definition, or a neutral one for categories managers added
+    const def = CATEGORY_BY_KEY[category as CategoryKey] ?? {
+      nameEn: custom?.nameEn ?? category,
+      nameAr: custom?.nameAr ?? category,
+      defaultPriority: "MEDIUM" as Priority,
+      priorityRules: [],
+    };
     const confidence =
       top.score > 0 ? Math.min(0.97, 0.6 + 0.08 * top.score + 0.06 * (top.score - (second?.score ?? 0))) : 0.3;
 
@@ -257,7 +267,7 @@ export class MockAIProvider implements AIProvider {
   }
 
   async extractEntities(input: MaintenanceInput): Promise<ExtractedMaintenanceData> {
-    const top = scoreCategories(fullText(input), input.imageFindings)[0];
+    const top = scoreCategories(fullText(input), input.imageFindings, input.categories)[0];
     return extract(input, top.score > 0 ? top.key : undefined);
   }
 
@@ -267,6 +277,6 @@ export class MockAIProvider implements AIProvider {
 }
 
 /** True when the text contains any maintenance vocabulary (a category keyword or symptom). */
-export function hasMaintenanceVocabulary(text: string): boolean {
-  return scoreCategories(text, undefined)[0]?.score > 0;
+export function hasMaintenanceVocabulary(text: string, categories?: MaintenanceInput["categories"]): boolean {
+  return scoreCategories(text, undefined, categories)[0]?.score > 0;
 }

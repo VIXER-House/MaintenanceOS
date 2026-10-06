@@ -54,13 +54,20 @@ const CATEGORY_SYNONYMS: Record<string, CategoryKey> = {
   other: "OTHER", general: "OTHER", "اخري": "OTHER",
 };
 
-export function normalizeCategory(v: unknown): CategoryKey {
+/**
+ * Map the AI's category to a known key. `allowed` = active category keys (built-in + custom);
+ * anything not active becomes OTHER.
+ */
+export function normalizeCategory(v: unknown, allowed?: string[]): string {
   if (typeof v !== "string") return "OTHER";
   const up = v.trim().toUpperCase().replace(/[\s-]+/g, "_");
-  if (isCategoryKey(up)) return up;
+  const ok = (k: string) => (allowed ? allowed.includes(k) : isCategoryKey(k));
+  if (ok(up)) return up;
+  if (allowed && isCategoryKey(up)) return "OTHER"; // built-in category a manager archived
   const n = normalizeArabic(v);
   const lookup = (term: string) => Object.entries(CATEGORY_SYNONYMS).find(([k]) => normalizeArabic(k) === term)?.[1];
-  return lookup(n) ?? lookup(n.split(" ")[0]) ?? "OTHER";
+  const hit = lookup(n) ?? lookup(n.split(" ")[0]) ?? "OTHER";
+  return ok(hit) ? hit : "OTHER";
 }
 
 const PRIORITY_SYNONYMS: Record<string, Priority> = {
@@ -118,14 +125,14 @@ export const RawClassificationSchema = z
   })
   .passthrough();
 
-export function parseClassificationResponse(raw: string | object, originalText = ""): MaintenanceClassification {
+export function parseClassificationResponse(raw: string | object, originalText = "", allowedCategories?: string[]): MaintenanceClassification {
   const json = typeof raw === "string" ? extractJson(raw) : raw;
   const parsed = RawClassificationSchema.safeParse(json);
   if (!parsed.success) throw new AIParseError(`Invalid classification shape: ${parsed.error.message}`, raw);
   const r = parsed.data;
   if (r.category === undefined && r.issue === undefined) throw new AIParseError("Classification missing category and issue", raw);
 
-  const category = normalizeCategory(r.category);
+  const category = normalizeCategory(r.category, allowedCategories);
   const issue = r.issue ?? "Maintenance issue";
   const severityRaw = (r.severity ?? "unknown").toLowerCase() as Severity;
   const needsMoreInfo = Boolean(r.needsMoreInfo ?? r.needs_more_info);

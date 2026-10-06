@@ -243,6 +243,7 @@ export interface CategoryRow {
   requiredSkill: string;
   quotationThreshold: number;
   priorityRules: RuleRow[];
+  keywords: string[];
 }
 
 export function CategoryEditButton({ category }: { category: CategoryRow }) {
@@ -282,6 +283,17 @@ export function CategoryEditButton({ category }: { category: CategoryRow }) {
             <div className="space-y-1 sm:col-span-2">
               <Label>{t.settings.description}</Label>
               <Input value={form.description} onChange={(e) => set({ description: e.target.value })} dir="auto" />
+            </div>
+            <div className="space-y-1 sm:col-span-2">
+              <Label>{t.manage.f.keywords}</Label>
+              <Textarea
+                rows={2}
+                dir="auto"
+                className="text-xs"
+                defaultValue={form.keywords.join("، ")}
+                key={open ? "kw-open" : "kw-closed"}
+                onChange={(e) => set({ keywords: e.target.value.split(/[,،\n]/).map((k) => k.trim()).filter(Boolean) })}
+              />
             </div>
             <div className="space-y-1">
               <Label>{t.settings.defaultPriority}</Label>

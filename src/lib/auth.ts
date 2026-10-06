@@ -54,7 +54,12 @@ export async function endSession() {
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {
-  return verifySession((await cookies()).get(SESSION_COOKIE)?.value);
+  const user = await verifySession((await cookies()).get(SESSION_COOKIE)?.value);
+  if (!user) return null;
+  // A deactivated account loses access immediately, not when its cookie expires
+  const row = await db.user.findUnique({ where: { id: user.id }, select: { isActive: true, role: true } }).catch(() => null);
+  if (!row || !row.isActive) return null;
+  return { ...user, role: row.role };
 }
 
 /** For server components/pages: redirects to /login when not authenticated. */

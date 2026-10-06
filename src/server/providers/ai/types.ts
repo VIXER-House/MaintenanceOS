@@ -1,4 +1,4 @@
-import type { CategoryKey, Priority } from "@/server/domain/constants";
+import type { Priority } from "@/server/domain/constants";
 
 export interface ConversationTurn {
   role: "resident" | "assistant";
@@ -17,13 +17,25 @@ export interface MaintenanceInput {
   knownAssets?: { assetCode: string; name: string; type: string; location: string }[];
   /** When true the AI must not ask another clarifying question */
   disallowFollowUp?: boolean;
+  /** Active categories (built-in + added by managers). Defaults to the built-in list. */
+  categories?: CategoryCatalogEntry[];
+}
+
+export interface CategoryCatalogEntry {
+  key: string;
+  nameEn: string;
+  nameAr: string;
+  description: string;
+  keywords: string[];
+  builtIn: boolean;
 }
 
 export type Severity = "minor" | "moderate" | "severe" | "unknown";
 
 export interface MaintenanceClassification {
   isMaintenanceRequest: boolean;
-  category: CategoryKey;
+  /** Category key — a built-in key or one added by a manager */
+  category: string;
   /** AI-suggested priority — validated by the priority engine, never trusted blindly */
   priority: Priority;
   /** 0..1 */

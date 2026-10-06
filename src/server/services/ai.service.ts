@@ -2,6 +2,7 @@ import { getAIProvider, getFallbackAIProvider } from "@/server/providers/ai";
 import type { MaintenanceClassification, MaintenanceInput, ResponseInput } from "@/server/providers/ai";
 import { withRetry } from "@/server/providers/http";
 import { renderTemplate } from "@/server/providers/ai/templates";
+import { getActiveCategoryCatalog } from "./category-catalog.service";
 
 export interface ClassificationOutcome {
   classification: MaintenanceClassification;
@@ -17,7 +18,8 @@ export interface ClassificationOutcome {
  * (with one retry), then falls back to the deterministic MockAIProvider.
  * Business logic never imports a vendor SDK.
  */
-export async function classifyRequest(input: MaintenanceInput): Promise<ClassificationOutcome> {
+export async function classifyRequest(rawInput: MaintenanceInput): Promise<ClassificationOutcome> {
+  const input: MaintenanceInput = rawInput.categories ? rawInput : { ...rawInput, categories: await getActiveCategoryCatalog().catch(() => undefined) };
   const primary = getAIProvider();
   const fallback = getFallbackAIProvider();
   const started = Date.now();

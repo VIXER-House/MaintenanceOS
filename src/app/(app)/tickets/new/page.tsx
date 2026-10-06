@@ -5,8 +5,8 @@ import { NewTicketForm } from "@/features/tickets/new-ticket-form";
 export default async function NewTicketPage() {
   await requirePageUser(MANAGERS);
   const [residents, categories] = await Promise.all([
-    db.resident.findMany({ where: { unitId: { not: null } }, include: { unit: true }, orderBy: { unit: { code: "asc" } } }),
-    db.category.findMany({ orderBy: { sortOrder: "asc" } }),
+    db.resident.findMany({ where: { unitId: { not: null }, isActive: true }, include: { unit: true }, orderBy: { unit: { code: "asc" } } }),
+    db.category.findMany({ where: { isActive: true }, orderBy: { sortOrder: "asc" } }),
   ]);
   return (
     <NewTicketForm

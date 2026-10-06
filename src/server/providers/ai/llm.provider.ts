@@ -1,7 +1,7 @@
 import { postChatCompletion } from "../http";
 import { geminiEffectiveModel, geminiGenerate, geminiText } from "../gemini";
 import { parseClassificationResponse } from "./parser";
-import { CLASSIFY_SYSTEM_PROMPT, buildClassifyUserPrompt, buildReplyPrompt } from "./prompts";
+import { buildClassifySystemPrompt, buildClassifyUserPrompt, buildReplyPrompt } from "./prompts";
 import { renderTemplate } from "./templates";
 import { MockAIProvider } from "./mock-ai.provider";
 import type {
@@ -29,8 +29,8 @@ export abstract class LLMProvider implements AIProvider {
   protected abstract complete(system: string, user: string, json: boolean): Promise<string>;
 
   async classifyMaintenanceRequest(input: MaintenanceInput): Promise<MaintenanceClassification> {
-    const raw = await this.complete(CLASSIFY_SYSTEM_PROMPT, buildClassifyUserPrompt(input), true);
-    const parsed = parseClassificationResponse(raw, input.text);
+    const raw = await this.complete(buildClassifySystemPrompt(input.categories), buildClassifyUserPrompt(input), true);
+    const parsed = parseClassificationResponse(raw, input.text, input.categories?.map((c) => c.key));
     if (input.disallowFollowUp) {
       parsed.needsMoreInfo = false;
       parsed.followUpQuestion = null;

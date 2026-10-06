@@ -266,6 +266,8 @@ model Resident {
   email     String?
   language  String   @default("ar")
   isOwner   Boolean  @default(true)
+  /// false = archived (moved out). Kept for ticket history.
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
   tickets       Ticket[]
@@ -294,6 +296,10 @@ model Category {
   quotationThreshold       Decimal  @default(1500) @db.Decimal(12, 2)
   icon                     String?
   sortOrder                Int      @default(0)
+  /// Extra words that identify this category in residents' messages (Arabic / English)
+  keywords                 String[] @default([])
+  /// false = archived: hidden from the AI and new tickets, kept for history
+  isActive                 Boolean  @default(true)
 
   tickets     Ticket[]
   teams       Team[]
@@ -344,6 +350,8 @@ model Technician {
   status        TechnicianStatus @default(AVAILABLE)
   maxConcurrent Int              @default(5)
   rating        Float            @default(4.5)
+  /// false = archived (left the company). Never auto-assigned; kept for ticket history.
+  isActive      Boolean          @default(true)
   createdAt     DateTime         @default(now())
 
   tickets Ticket[]
@@ -716,4 +724,20 @@ model AppSetting {
   value     Json
   updatedBy String?
   updatedAt DateTime @updatedAt
+}
+
+/// Who changed what in the master data (residents, units, settings, …).
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actorName String
+  entity    String
+  entityId  String?
+  action    String
+  summary   String
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
 }
