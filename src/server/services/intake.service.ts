@@ -16,6 +16,7 @@ import { recordEvent } from "./event.service";
 import { hasMaintenanceVocabulary } from "@/server/providers/ai/mock-ai.provider";
 import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
+import { findUnitInText, guessUnitAttempt } from "@/server/domain/unit-codes";
 import { getGlobalPriorityRules } from "./settings.service";
 import type { PriorityRule } from "@/server/domain/categories";
 import type { Priority } from "@/server/domain/constants";
@@ -244,17 +245,20 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
 
   // ── 0. Self-registration: we don't know this resident's unit yet
   if (!resident.unitId) {
-    const match = text.match(/\b([a-z]\d{2})\s*[-–_ ]?\s*(\d{3})\b/i);
-    const unit = match ? await db.unit.findUnique({ where: { code: `${match[1].toUpperCase()}-${match[2]}` } }) : null;
-    const remaining = match ? text.replace(match[0], "").replace(/^[\s,.:\-–]+|[\s,.:\-–]+$/g, "") : text;
+    const units = await db.unit.findMany({ select: { id: true, code: true } });
+    const found = findUnitInText(text, units);
+    const unit = found ? await db.unit.findUnique({ where: { id: found.unit.id } }) : null;
+    const attempt = found ? null : guessUnitAttempt(text);
+    const remaining = (found ? text.replace(found.matched, "") : text).replace(/^[\s,.:\-–]+|[\s,.:\-–]+$/g, "");
+    const example = units[0]?.code ?? "A01-101";
     const pending = (context.pendingRequest as string | undefined) ?? null;
 
     if (!unit) {
       // Remember the first real request so we can file it once we know the unit
       const keep = pending ?? (remaining.length >= 3 ? remaining : null);
       await updateConversation(conversation.id, { state: "AWAITING_REGISTRATION", context: { ...context, pendingRequest: keep } });
-      const kind = match ? "registration_unit_not_found" : "registration_needed";
-      const body = await generateReply({ kind, language: lang, data: { unit: match?.[0] ?? null } });
+      const kind = attempt ? "registration_unit_not_found" : "registration_needed";
+      const body = await generateReply({ kind, language: lang, data: { unit: attempt, example } });
       await reply(body);
       return { action: "registration_requested", residentId: resident.id, conversationId: conversation.id, replies: [body] };
     }

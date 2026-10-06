@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   Bell, Boxes, Building, ClipboardList, Cog, HardHat, Languages, LayoutDashboard, LogOut, Menu, MessageCircle,
-  PlayCircle, Truck, Users, Wrench, X, Inbox,
+  PlayCircle, Truck, Users, Wrench, X, Inbox, FileSpreadsheet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useI18n, useSetLocale } from "@/lib/i18n/client";
@@ -58,6 +58,7 @@ export function AppShell({
       title: t.nav.system,
       items: [
         { href: "/notifications", label: t.nav.notifications, icon: Bell },
+        { href: "/import", label: t.nav.import, icon: FileSpreadsheet, roles: MANAGERS },
         { href: "/settings", label: t.nav.settings, icon: Cog, roles: MANAGERS },
       ],
     },

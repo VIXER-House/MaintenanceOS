@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageCircle } from "lucide-react";
+import { FileSpreadsheet, MessageCircle } from "lucide-react";
 import { requirePageUser, MANAGERS } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getDictionary } from "@/lib/i18n/server";
@@ -22,7 +22,11 @@ export default async function ResidentsPage() {
   });
   return (
     <div>
-      <PageHeader title={t.residents.title} subtitle={`${t.residents.subtitle} · ${residents.length}`} />
+      <PageHeader
+        title={t.residents.title}
+        subtitle={`${t.residents.subtitle} · ${residents.length}`}
+        actions={<Button asChild><Link href="/import?type=residents"><FileSpreadsheet /> {t.residentsImport.button}</Link></Button>}
+      />
       <Card>
         <Table>
           <THead>
