@@ -66,17 +66,7 @@
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.7"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@prisma/client",
-      "@prisma/engines",
-      "prisma",
-      "esbuild",
-      "sharp"
-    ]
-  },
   "engines": {
     "node": ">=20.9"
-  },
-  "packageManager": "pnpm@10.28.0"
+  }
 }

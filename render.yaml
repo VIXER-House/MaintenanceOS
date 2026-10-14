@@ -11,8 +11,8 @@ services:
     name: maintenanceos
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
-    startCommand: pnpm start:hosted
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:hosted
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
