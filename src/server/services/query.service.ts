@@ -148,13 +148,19 @@ export async function getTicketDetail(id: string, user: SessionUser) {
       messages: { orderBy: { createdAt: "asc" } },
       attachments: { orderBy: { createdAt: "asc" } },
       quotations: { orderBy: { createdAt: "desc" }, include: { items: true } },
+      fakeReports: { orderBy: { createdAt: "desc" }, take: 1 },
     },
   });
   if (!t) return null;
+  const fake = t.fakeReports[0] && t.fakeReports[0].status !== "DISMISSED" ? t.fakeReports[0] : null;
+  const unitContacts =
+    t.resident && !t.resident.verified && t.unitId
+      ? await db.resident.findMany({ where: { unitId: t.unitId, verified: true, isActive: true, id: { not: t.resident.id } }, select: { name: true, nameAr: true, phone: true }, take: 3 })
+      : [];
   const suggested = t.suggestedContractorId ? await db.contractor.findUnique({ where: { id: t.suggestedContractorId } }) : null;
   const isAssignee =
     (!!user.technicianId && user.technicianId === t.technicianId) || (!!user.contractorId && user.contractorId === t.contractorId);
-  const actions = availableActions(t.status as TicketStatus, user.role, isAssignee);
+  const actions = availableActions(t.status as TicketStatus, user.role, isAssignee).filter((x) => x !== "reportFake" || (!fake && !!t.resident));
   const manager = isManager(user.role);
   const recommendation =
     manager && t.category && !["CLOSED", "CANCELLED", "COMPLETED"].includes(t.status)
@@ -186,7 +192,9 @@ export async function getTicketDetail(id: string, user: SessionUser) {
     resolutionNotes: t.resolutionNotes,
     compound: t.compound,
     category: t.category ? { key: t.category.key, nameEn: t.category.nameEn, nameAr: t.category.nameAr, requiredSkill: t.category.requiredSkill } : null,
-    resident: t.resident ? { id: t.resident.id, name: t.resident.name, nameAr: t.resident.nameAr, phone: t.resident.phone, language: t.resident.language } : null,
+    resident: t.resident ? { id: t.resident.id, name: t.resident.name, nameAr: t.resident.nameAr, phone: t.resident.phone, language: t.resident.language, verified: t.resident.verified } : null,
+    unitContacts,
+    fakeReport: fake ? { status: fake.status, reason: fake.reason, reporterName: fake.reporterName, createdAt: fake.createdAt.toISOString() } : null,
     unit: t.unit ? { code: t.unit.code, floor: t.unit.floor, building: t.unit.building.code } : null,
     asset: t.asset
       ? {

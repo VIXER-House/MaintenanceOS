@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, CheckCheck, ClipboardList, Loader2, Lock, Pencil, Play, Plus, RotateCcw, Trash2, UserPlus, X, Ban, Flag, FileEdit } from "lucide-react";
+import { Check, CheckCheck, ClipboardList, Loader2, Lock, Pencil, Play, Plus, RotateCcw, Trash2, UserPlus, X, Ban, Flag, FileEdit, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input, Label, Select, Textarea } from "@/components/ui/input";
@@ -48,6 +48,7 @@ export function ActionBar({ ticket, role }: { ticket: TicketDetail; role: Role }
         </Button>
       )}
       {a.includes("decline") && <DeclineDialog ticketId={ticket.id} />}
+      {a.includes("reportFake") && <ReportFakeDialog ticketId={ticket.id} />}
       {a.includes("start") && (
         <Button variant={a.includes("acknowledge") ? "outline" : "default"} onClick={() => run("start", {}, t.actions.start)} disabled={!!busy}>
           {spin("start") ?? <Play />} {t.actions.start}
@@ -315,6 +316,33 @@ function DeclineDialog({ ticketId }: { ticketId: string }) {
           <Button variant="outline" onClick={() => setOpen(false)}>{t.common.cancel}</Button>
           <Button disabled={!!busy || reason.trim().length < 3} onClick={async () => (await run("decline", { reason }, t.actions.declined)) && setOpen(false)}>
             {busy && <Loader2 className="animate-spin" />} {t.actions.decline}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReportFakeDialog({ ticketId }: { ticketId: string }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const { run, busy } = useAction(ticketId);
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="text-red-700"><ShieldAlert /> {t.fake.report}</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t.fake.reportTitle}</DialogTitle>
+          <DialogDescription>{t.fake.reportHint}</DialogDescription>
+        </DialogHeader>
+        <Textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t.fake.reportReason} dir="auto" />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)}>{t.common.cancel}</Button>
+          <Button variant="destructive" disabled={!!busy || reason.trim().length < 3} onClick={async () => (await run("report-fake", { reason }, t.fake.reported)) && setOpen(false)}>
+            {busy && <Loader2 className="animate-spin" />} {t.fake.report}
           </Button>
         </DialogFooter>
       </DialogContent>

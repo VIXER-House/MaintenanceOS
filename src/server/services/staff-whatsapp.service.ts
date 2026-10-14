@@ -91,6 +91,7 @@ async function loadJob(ticketId: string) {
     include: {
       unit: { include: { building: true } },
       resident: { include: { conversations: { select: { context: true }, take: 1 } } },
+      fakeReports: { where: { status: { in: ["PENDING", "CONFIRMED"] } }, select: { id: true }, take: 1 },
       category: true,
       asset: true,
       aiAnalyses: { orderBy: { createdAt: "desc" }, take: 1, select: { entities: true, location: true } },
@@ -109,6 +110,26 @@ function issueAr(t: JobTicket) {
   return e?.issueAr ? `${e.issueAr}${place ? ` — ${place}` : ""}` : t.title;
 }
 
+/** Arabic one-line description of a ticket's problem (for WhatsApp texts). */
+export async function ticketIssueAr(ticketId: string) {
+  return issueAr(await loadJob(ticketId));
+}
+
+/** True for demo / simulator tickets — they must never message real phones. */
+export async function isTicketSimulated(ticketId: string) {
+  return isSimulated(await loadJob(ticketId));
+}
+
+/** Verified, active residents of the same unit (not the person who opened the ticket). */
+export async function verifiedUnitContacts(unitId: string | null | undefined, exceptResidentId?: string | null) {
+  if (!unitId) return [];
+  return db.resident.findMany({
+    where: { unitId, verified: true, isActive: true, ...(exceptResidentId ? { id: { not: exceptResidentId } } : {}) },
+    orderBy: [{ isOwner: "desc" }, { createdAt: "asc" }],
+    take: 3,
+  });
+}
+
 /** Demo runs and simulator conversations stay inside the app (no real WhatsApp to staff). */
 function isSimulated(t: JobTicket) {
   if (t.isDemo) return true;
@@ -118,6 +139,8 @@ function isSimulated(t: JobTicket) {
 
 async function jobOfferText(t: JobTicket, assigneeName: string) {
   const policies = await loadSlaPolicies();
+  const unverified = !!t.resident && !t.resident.verified;
+  const contacts = unverified ? await verifiedUnitContacts(t.unitId, t.residentId) : [];
   const lines = [
     `🔧 أهلاً ${assigneeName.split(" ")[0]}، عندك طلب صيانة جديد`,
     `رقم الطلب: ${t.ticketNumber} — الأولوية: ${PRIORITY_LABELS[t.priority].ar}${t.priority === "EMERGENCY" ? " 🚨" : ""}`,
@@ -125,11 +148,18 @@ async function jobOfferText(t: JobTicket, assigneeName: string) {
     t.category ? `التصنيف: ${t.category.nameAr}` : null,
     t.unit ? `المكان: الوحدة ${t.unit.code} — مبنى ${t.unit.building.code}، الدور ${t.unit.floor}` : null,
     t.resident ? `الساكن: ${t.resident.nameAr ?? t.resident.name} — ${t.resident.phone}` : null,
+    t.resident ? (unverified ? `⚠️ الرقم ده غير موثق (مش مسجل على الوحدة عند الإدارة)` : `✅ رقم موثق`) : null,
+    ...(unverified
+      ? contacts.length
+        ? [`اتأكد الأول من الساكن الموثق للوحدة: ${contacts.map((c) => `${c.nameAr ?? c.name} — ${c.phone}`).join(" / ")}`]
+        : [`مفيش ساكن موثق مسجل للوحدة دي — اتأكد قبل ما تدخل.`]
+      : []),
     t.asset ? `الجهاز: ${t.asset.nameAr ?? t.asset.name} (${t.asset.assetCode})` : null,
     t.slaResponseDueAt ? `لازم ترد خلال: ${formatMinutesHuman(policies[t.priority].responseMinutes, "ar")}` : null,
     "",
     `رد بـ 1 للقبول ✅`,
     `أو 2 مع السبب لو مش هتقدر (مثال: 2 عندي ظرف عائلي)`,
+    `أو 3 مع السبب لو البلاغ وهمي (مثال: 3 الساكن قال محدش طلب)`,
   ];
   return lines.filter((l) => l !== null).join("\n");
 }
@@ -181,9 +211,10 @@ export async function sendAssignmentReminder(ticketId: string) {
 
 const ACCEPT = ["1", "١", "قبول", "اقبل", "موافق", "تمام", "ماشي", "حاضر", "اوك", "ok", "okay", "accept", "yes", "جاي", "انا جاي", "في الطريق", "رايح"];
 const DECLINE = ["2", "٢", "اعتذار", "اعتذر", "معتذر", "مش هقدر", "مقدرش", "مش فاضي", "مش قادر", "رفض", "لا", "decline", "no", "cant", "can't", "cannot"];
-const LIST = ["مهامي", "طلباتي", "الطلبات", "jobs", "my jobs", "list", "3", "٣"];
+const FAKE = ["3", "٣", "وهمي", "بلاغ وهمي", "طلب وهمي", "مزيف", "كاذب", "بلاغ كاذب", "مش حقيقي", "fake", "prank", "spam"];
+const LIST = ["مهامي", "طلباتي", "الطلبات", "jobs", "my jobs", "list", "0", "٠"];
 
-export type StaffIntent = { kind: "accept" | "decline"; ticketNumber: number | null; reason: string } | { kind: "list" } | { kind: "unknown" };
+export type StaffIntent = { kind: "accept" | "decline" | "fake"; ticketNumber: number | null; reason: string } | { kind: "list" } | { kind: "unknown" };
 
 /** "1", "1 MAINT-000123", "2 عندي ظرف عائلي", "مش هقدر النهارده عشان تعبان", "مهامي" */
 export function parseStaffReply(text: string): StaffIntent {
@@ -195,6 +226,10 @@ export function parseStaffReply(text: string): StaffIntent {
   const first = n.split(" ")[0] ?? "";
   const startsWith = (words: string[]) => words.some((w) => first === normalizeArabic(w) || (w.includes(" ") && n.startsWith(normalizeArabic(w))));
   if (LIST.some((w) => n === normalizeArabic(w))) return { kind: "list" };
+  if (startsWith(FAKE) || FAKE.some((w) => w.length > 3 && matchKeyword(n, w))) {
+    const reason = rest.replace(/^\s*(3|٣)\s*[-–:.,]?\s*/, "").trim();
+    return { kind: "fake", ticketNumber, reason: /^(3|٣)$/.test(rest) ? "" : reason };
+  }
   if (startsWith(DECLINE) || DECLINE.some((w) => w.length > 3 && matchKeyword(n, w))) {
     const reason = rest.replace(/^\s*(2|٢)\s*[-–:.,]?\s*/, "").trim();
     return { kind: "decline", ticketNumber, reason: reason === rest && /^(2|٢)$/.test(rest) ? "" : reason };
@@ -206,6 +241,7 @@ export function parseStaffReply(text: string): StaffIntent {
 export async function handleStaffMessage(staff: StaffContact, msg: InboundMessage, providerName = "whatsapp"): Promise<{ action: string; ticketNumber?: string; replies: string[] }> {
   // Lazy import to avoid a cycle (ticket.service → staff-whatsapp.service)
   const { acknowledgeTicket, declineAssignment } = await import("./ticket.service");
+  const { reportFakeTicket } = await import("./fake-report.service");
   // Keep their message (also makes Meta/bridge retries idempotent)
   const inbound = await db.ticketMessage.create({
     data: {
@@ -239,7 +275,7 @@ export async function handleStaffMessage(staff: StaffContact, msg: InboundMessag
     const list = active.length
       ? active.map((t) => `• ${t.ticketNumber} — ${t.title}${t.status === "ASSIGNED" ? " (مستني ردك)" : ""}`).join("\n")
       : "مفيش طلبات مفتوحة عليك دلوقتي 👍";
-    const help = "للقبول: 1 (أو 1 MAINT-000123)\nللاعتذار: 2 والسبب (مثال: 2 عندي ظرف عائلي)\nلعرض طلباتك: مهامي";
+    const help = "للقبول: 1 (أو 1 MAINT-000123)\nللاعتذار: 2 والسبب (مثال: 2 عندي ظرف عائلي)\nبلاغ وهمي: 3 والسبب (مثال: 3 الساكن قال محدش طلب)\nلعرض طلباتك: مهامي";
     return { action: intent.kind === "list" ? "staff_list" : "staff_help", replies: [await reply(`${list}\n\n${help}`)] };
   }
 
@@ -254,6 +290,18 @@ export async function handleStaffMessage(staff: StaffContact, msg: InboundMessag
     if (target.status !== "ASSIGNED") return { action: "staff_already", ticketNumber: target.ticketNumber, replies: [await reply(`الطلب ${target.ticketNumber} مقبول بالفعل ✅`, target.id)] };
     await acknowledgeTicket(target.id, staff.actor);
     return { action: "staff_accepted", ticketNumber: target.ticketNumber, replies: [await reply(`تمام ✅ تم تسجيل قبولك للطلب ${target.ticketNumber}. بالتوفيق!`, target.id)] };
+  }
+
+  if (intent.kind === "fake") {
+    if (intent.reason.replace(/[^\p{L}\p{N}]/gu, "").length < 3) {
+      return { action: "staff_reason_needed", ticketNumber: target.ticketNumber, replies: [await reply(`ليه البلاغ ${target.ticketNumber} وهمي؟ ابعت 3 ومعاها السبب عشان المسؤول يراجع.\nمثال: 3 الساكن قال محدش طلب صيانة`, target.id)] };
+    }
+    await reportFakeTicket(target.id, staff.actor, intent.reason);
+    return {
+      action: "staff_fake_reported",
+      ticketNumber: target.ticketNumber,
+      replies: [await reply(`تمام، اتسجل إن الطلب ${target.ticketNumber} وهمي واتلغى من عليك ✅\nالمسؤول هيراجع الرقم اللي بعته.`, target.id)],
+    };
   }
 
   // decline — a reason is required so the manager knows why

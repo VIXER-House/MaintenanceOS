@@ -15,7 +15,8 @@ import { notifyRoles } from "./notification.service";
 import { recordEvent } from "./event.service";
 import { hasMaintenanceVocabulary as hasVocab } from "@/server/providers/ai/mock-ai.provider";
 import { getActiveCategoryCatalog } from "./category-catalog.service";
-import { findStaffByPhone, handleStaffMessage, parseStaffReply } from "./staff-whatsapp.service";
+import { findStaffByPhone, handleStaffMessage, parseStaffReply, sendStaffWhatsApp } from "./staff-whatsapp.service";
+import { alertUnitOfUnverifiedTicket, handleUnitAlertReply, isPhoneBlocked, registerBlockedAttempt } from "./fake-report.service";
 import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
 import { findUnitInText, guessUnitAttempt } from "@/server/domain/unit-codes";
@@ -40,6 +41,9 @@ import { loadSlaPolicies } from "./sla.service";
 
 export type IntakeAction =
   | "created"
+  | "blocked"
+  | "unit_confirmed"
+  | "unit_denied"
   | "follow_up_requested"
   | "follow_up_answered"
   | "status"
@@ -115,6 +119,13 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
       const r = await handleStaffMessage(staff, msg, providerName);
       return { action: "staff", replies: r.replies, ticketNumber: r.ticketNumber };
     }
+  }
+
+  // Numbers a manager blocked (fake tickets) can't open requests
+  if (await isPhoneBlocked(phone)) {
+    const notice = await registerBlockedAttempt(phone);
+    if (notice) await sendStaffWhatsApp(phone, notice, null, null, { simulate: providerName === "mock" });
+    return { action: "blocked", replies: notice ? [notice] : [] };
   }
 
   const residentInclude = { unit: { include: { building: { include: { compound: true } } } } } as const;
@@ -307,6 +318,17 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   }
   const unitInfo = resident.unit!;
 
+  // ── 0a. A verified resident answering "a ticket was opened for your unit from an unknown number" (1 / 2)
+  if (resident.verified && context.unitAlert && conversation.state === "IDLE" && text && !attachmentIds.length) {
+    const r = await handleUnitAlertReply(resident, conversation, text);
+    if (r) {
+      await db.ticketMessage.update({ where: { id: inbound.id }, data: { ticketId: r.ticketId } });
+      await reply(r.reply, r.ticketId);
+      return { action: r.action, residentId: resident.id, conversationId: conversation.id, ticketId: r.ticketId, replies: [r.reply] };
+    }
+    conversation = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+  }
+
   // ── 0b. Answer to "same problem or a different one?" (open ticket of the same type)
   const dup = context.duplicateCheck;
   if (dup && conversation.state === "AWAITING_INFO") {
@@ -495,6 +517,8 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     messageId: inbound.id,
   });
   const t = triage.ticket;
+  // Unverified number → ask the unit's verified residents whether they know about it
+  if (!resident.verified) await alertUnitOfUnverifiedTicket(t.id);
 
   if (triage.needsMoreInfo) {
     await updateConversation(conversation.id, {

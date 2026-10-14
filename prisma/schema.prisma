@@ -93,6 +93,10 @@ enum TicketEventType {
   ASSET_HISTORY_UPDATED
   DECLINED
   REMINDER_SENT
+  FAKE_REPORTED
+  FAKE_CONFIRMED
+  FAKE_DISMISSED
+  UNIT_CONFIRMED
 }
 
 enum ActorType {
@@ -459,6 +463,7 @@ model Ticket {
   notifications Notification[]
   assetHistory  AssetMaintenance[]
   activeInConversations Conversation[]
+  fakeReports   FakeReport[]
 
   @@index([status])
   @@index([priority])
@@ -748,4 +753,51 @@ model AuditLog {
 
   @@index([entity, entityId])
   @@index([createdAt])
+}
+
+// ───────────────────────── Fake reports & blocked numbers ─────────────────────────
+
+enum FakeReportStatus {
+  PENDING
+  CONFIRMED
+  DISMISSED
+}
+
+/// A ticket somebody (assigned technician, the unit's verified resident, a manager) says is fake.
+model FakeReport {
+  id             String           @id @default(cuid())
+  ticketId       String
+  ticket         Ticket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  /// Phone that created the ticket — what the manager may block
+  phone          String
+  residentId     String?
+  reporterType   ActorType
+  reporterName   String
+  reason         String
+  status         FakeReportStatus @default(PENDING)
+  /// The report cancelled the ticket (so "not fake" restores it)
+  ticketCancelled Boolean         @default(false)
+  /// Status before the report — restored when the manager says it's not fake
+  previousStatus String?
+  resolvedAt     DateTime?
+  resolvedByName String?
+  resolutionNote String?
+  createdAt      DateTime         @default(now())
+
+  @@index([phone])
+  @@index([status, createdAt])
+  @@index([ticketId])
+}
+
+/// Numbers that may no longer open tickets on WhatsApp.
+model BlockedPhone {
+  id            String    @id @default(cuid())
+  phone         String    @unique
+  reason        String
+  blockedByName String
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  /// Last time we told them they're blocked (at most once a day)
+  lastNoticeAt  DateTime?
+  createdAt     DateTime  @default(now())
 }

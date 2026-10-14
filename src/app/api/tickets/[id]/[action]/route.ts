@@ -4,6 +4,7 @@ import { parseBody, route } from "@/server/http/api";
 import { AppError } from "@/server/services/errors";
 import { PRIORITIES } from "@/server/domain/constants";
 import * as tickets from "@/server/services/ticket.service";
+import { reportFakeTicket } from "@/server/services/fake-report.service";
 
 /**
  * Ticket lifecycle actions — POST /api/tickets/:id/:action
@@ -55,6 +56,7 @@ const schemas = {
   }),
   notes: z.object({ note: z.string().trim().min(1).max(1000) }),
   decline: z.object({ reason: z.string().trim().min(3, "Please give a reason").max(500) }),
+  "report-fake": z.object({ reason: z.string().trim().min(3, "Please give a reason").max(500) }),
 } as const;
 
 type Action = keyof typeof schemas;
@@ -71,6 +73,7 @@ export const POST = route(async (req, { id, action }) => {
     case "assign": result = await tickets.assignTicket(id, body, actor); break;
     case "acknowledge": result = await tickets.acknowledgeTicket(id, actor); break;
     case "decline": result = await tickets.declineAssignment(id, actor, body.reason); break;
+    case "report-fake": await reportFakeTicket(id, actor, body.reason); result = await tickets.getTicketOrThrow(id); break;
     case "start": result = await tickets.startTicket(id, actor); break;
     case "request-quotation": result = await tickets.requestQuotation(id, actor, body.notes ?? undefined); break;
     case "quotation": result = (await tickets.submitQuotation(id, body, actor)).ticket; break;

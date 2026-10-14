@@ -56,7 +56,8 @@ export type TicketAction =
   | "cancel"
   | "reopen"
   | "changePriority"
-  | "decline";
+  | "decline"
+  | "reportFake";
 
 /** Which status a given action moves the ticket to (null = status unchanged) */
 export const ACTION_TARGET: Partial<Record<TicketAction, TicketStatus>> = {
@@ -74,7 +75,7 @@ export const ACTION_TARGET: Partial<Record<TicketAction, TicketStatus>> = {
   reopen: "IN_PROGRESS",
 };
 
-const FIELD_ACTIONS: TicketAction[] = ["acknowledge", "start", "requestQuotation", "submitQuotation", "complete", "decline"];
+const FIELD_ACTIONS: TicketAction[] = ["acknowledge", "start", "requestQuotation", "submitQuotation", "complete", "decline", "reportFake"];
 const MANAGER_ONLY: TicketAction[] = ["assign", "approve", "reject", "requestRevision", "close", "cancel", "reopen", "changePriority"];
 
 /**
@@ -110,5 +111,7 @@ export function availableActions(status: TicketStatus, role: Role, isAssignee = 
   consider("changePriority", !isTerminal(status));
   // Only the assignee can say "I can't do this one" (managers reassign instead)
   consider("decline", isAssignee && ["ASSIGNED", "ACKNOWLEDGED", "IN_PROGRESS"].includes(status));
+  // "Nobody asked for this" — the assignee (or a manager) reports the ticket as fake
+  consider("reportFake", !isTerminal(status) && status !== "COMPLETED");
   return out;
 }

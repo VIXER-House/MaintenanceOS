@@ -22,6 +22,8 @@ export interface ConversationContext {
     messageId?: string | null;
     asked?: number;
   } | null;
+  /** A ticket was opened for this resident's unit from an unverified number — waiting for "1" (we know it) / "2" (not us) */
+  unitAlert?: { ticketId: string; ticketNumber: string; at: string } | null;
   [k: string]: unknown;
 }
 
@@ -70,12 +72,13 @@ function providerFor(conversation: Conversation): WhatsAppProvider {
 export async function sendToResident(
   residentId: string,
   body: string,
-  opts: { ticketId?: string | null; senderType?: ActorType; senderName?: string } = {},
+  opts: { ticketId?: string | null; senderType?: ActorType; senderName?: string; via?: "real" | "mock" } = {},
 ) {
   const resident = await db.resident.findUnique({ where: { id: residentId } });
   if (!resident) return null;
   const conversation = await getOrCreateConversation(resident.id, resident.phone);
-  const provider = providerFor(conversation);
+  // `via` forces the channel for residents who never wrote to us (no provider in their conversation yet)
+  const provider = opts.via === "real" ? getWhatsAppProvider() : opts.via === "mock" ? getMockWhatsAppProvider() : providerFor(conversation);
   let result: Awaited<ReturnType<WhatsAppProvider["sendMessage"]>>;
   try {
     result = await provider.sendMessage(resident.phone, body);

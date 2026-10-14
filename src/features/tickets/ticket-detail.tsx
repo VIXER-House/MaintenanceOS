@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Bot, Brain, Building2, CheckCircle2, ClipboardCheck, FileText, Hammer, History, MapPin, MessageCircle, Mic,
-  Package, Pencil, Phone, Sparkles, User, Wrench, Image as ImageIcon, Clock, AlertTriangle,
+  Package, Pencil, Phone, Sparkles, User, Wrench, Image as ImageIcon, Clock, AlertTriangle, ShieldAlert, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -60,6 +60,8 @@ export function TicketDetailView({
             <PriorityBadge priority={t.priority} />
             {t.priorityOverridden && <Badge variant="muted"><Pencil className="h-3 w-3" /> manual</Badge>}
             <Badge variant="muted">{t.source === "WHATSAPP" ? <MessageCircle className="h-3 w-3" /> : <FileText className="h-3 w-3" />} {t.source}</Badge>
+            {t.resident && !t.resident.verified && <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800"><ShieldAlert className="h-3 w-3" /> {tr.fake.unverifiedNumber}</Badge>}
+            {t.fakeReport && <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700"><ShieldAlert className="h-3 w-3" /> {t.fakeReport.status === "CONFIRMED" ? tr.fake.confirmedFake : tr.fake.reportedFake}</Badge>}
           </div>
           <h1 className="mt-1.5 flex items-center gap-2 text-xl font-semibold tracking-tight">
             <CategoryIcon categoryKey={t.category?.key} className="h-5 w-5" /> {t.title}
@@ -72,6 +74,29 @@ export function TicketDetailView({
         <ActionBar ticket={t} role={role} />
       </div>
 
+      {t.fakeReport && (
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <span className="font-medium">{t.fakeReport.status === "CONFIRMED" ? tr.fake.confirmedFake : tr.fake.reportedFake}</span> — {t.fakeReport.reporterName}: <span dir="auto">“{t.fakeReport.reason}”</span>
+            {isManagerRole && <Link href="/fake-reports" className="ms-2 underline">{tr.fake.review}</Link>}
+          </div>
+        </div>
+      )}
+      {!t.fakeReport && t.resident && !t.resident.verified && !["CLOSED", "CANCELLED"].includes(t.status) && (
+        <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            {tr.fake.unverifiedHint}
+            {t.unitContacts.length > 0 ? (
+              <span className="ms-1">{tr.fake.verifiedContacts}: {t.unitContacts.map((c) => `${(locale === "ar" ? c.nameAr : null) ?? c.name} (${c.phone})`).join(" · ")}</span>
+            ) : (
+              <span className="ms-1">{tr.fake.noVerifiedContacts}</span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="space-y-4 xl:col-span-2">
           {/* Issue */}
@@ -80,7 +105,18 @@ export function TicketDetailView({
             <CardContent>
               <blockquote className="whitespace-pre-line rounded-md border-s-4 border-emerald-500 bg-emerald-50/50 px-4 py-3 text-[15px]" dir="auto">{t.description}</blockquote>
               <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-                <Field icon={User} label={tr.common.resident} value={name(t.resident) ?? "—"} />
+                <Field
+                  icon={User}
+                  label={tr.common.resident}
+                  value={
+                    t.resident ? (
+                      <span className="inline-flex items-center gap-1">
+                        {name(t.resident)}
+                        {t.resident.verified ? <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-label={tr.fake.verified} /> : <ShieldAlert className="h-3.5 w-3.5 text-amber-600" aria-label={tr.fake.unverifiedNumber} />}
+                      </span>
+                    ) : "—"
+                  }
+                />
                 <Field icon={Building2} label={tr.common.unit} value={t.unit ? `${t.unit.code} · ${t.unit.building}` : "—"} />
                 <Field icon={MapPin} label={tr.common.location} value={t.location ?? "—"} />
                 <Field icon={Package} label={tr.common.asset} value={t.asset ? <Link className="text-primary hover:underline" href={`/assets/${t.asset.id}`}>{t.asset.assetCode}</Link> : "—"} />
