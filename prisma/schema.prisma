@@ -801,3 +801,12 @@ model BlockedPhone {
   lastNoticeAt  DateTime?
   createdAt     DateTime  @default(now())
 }
+
+/// One row per inbound provider message id — claimed atomically before processing so a
+/// message delivered twice (webhook retries, WhatsApp re-delivery) is handled only once.
+model InboundReceipt {
+  id        String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

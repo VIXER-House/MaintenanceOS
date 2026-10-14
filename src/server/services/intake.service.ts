@@ -41,6 +41,7 @@ import { loadSlaPolicies } from "./sla.service";
 
 export type IntakeAction =
   | "created"
+  | "language_changed"
   | "blocked"
   | "unit_confirmed"
   | "unit_denied"
@@ -89,6 +90,25 @@ function isYes(text: string) {
 function isNegativeOnly(text: string) {
   return normalizeArabic(text).split(" ").filter(Boolean).length <= 2 && isNo(text);
 }
+/** Explicit "talk to me in Arabic/English" in a short message. */
+function requestedLanguage(text: string): "ar" | "en" | null {
+  const n = normalizeArabic(text).toLowerCase();
+  if (!n || n.split(" ").length > 6) return null;
+  if (/(english|انجليزي|انجلش|بالانجليزي|بالانجلش)/.test(n)) return "en";
+  if (/(عربي|بالعربي|arabic)/.test(n)) return "ar";
+  return null;
+}
+/** The language a message is written in: any Arabic → ar; two or more Latin words (no Arabic) → en. */
+function writtenLanguage(text: string): "ar" | "en" | null {
+  if (!text) return null;
+  if (detectLanguage(text) === "ar") return "ar";
+  const words = text.replace(/maint-?\d+/gi, " ").match(/[a-z]{2,}/gi) ?? [];
+  return words.length >= 2 ? "en" : null;
+}
+/** "كلمني عربي", "English please" — nothing else in the message */
+function isOnlyLanguageRequest(text: string) {
+  return !!requestedLanguage(text) && normalizeArabic(text).split(" ").length <= 4;
+}
 function isStatusQuery(text: string) {
   const n = normalizeArabic(text);
   return /maint-?\d+/i.test(text) || (n.split(" ").length <= 4 && STATUS.some((k) => matchKeyword(n, k)));
@@ -103,11 +123,27 @@ function isStatusQuery(text: string) {
  *   ticket completed ──▶ AWAITING_CONFIRMATION ──"تمام"/"لسه"──▶ confirmed / reopened
  */
 export async function handleInboundMessage(msg: InboundMessage, providerName: string, opts: { skipDuplicateCheck?: boolean } = {}): Promise<IntakeResult> {
-  // Idempotency: Meta retries webhooks
-  if (msg.providerMessageId) {
-    const dup = await db.ticketMessage.findFirst({ where: { providerMessageId: msg.providerMessageId, direction: "INBOUND" } });
-    if (dup) return { action: "duplicate", replies: [] };
+  // Idempotency: webhook retries and WhatsApp re-deliveries can bring the same message twice, even
+  // at the same moment. Claim its id atomically first — only one request gets to process it.
+  const id = msg.providerMessageId;
+  if (id) {
+    const claimed = await db.inboundReceipt.createMany({ data: [{ id }], skipDuplicates: true });
+    if (!claimed.count) return { action: "duplicate", replies: [] };
+    // Messages processed before receipts existed
+    const old = await db.ticketMessage.findFirst({ where: { providerMessageId: id, direction: "INBOUND" }, select: { id: true } });
+    if (old) return { action: "duplicate", replies: [] };
+    if (Math.random() < 0.01) await db.inboundReceipt.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - 14 * 86400_000) } } }).catch(() => null);
   }
+  try {
+    return await processInbound(msg, providerName, opts);
+  } catch (e) {
+    // Let a retry of this message be processed again
+    if (id) await db.inboundReceipt.delete({ where: { id } }).catch(() => null);
+    throw e;
+  }
+}
+
+async function processInbound(msg: InboundMessage, providerName: string, opts: { skipDuplicateCheck?: boolean }): Promise<IntakeResult> {
 
   const phone = normalizePhone(msg.from);
 
@@ -153,7 +189,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   let conversation = await getOrCreateConversation(resident.id, phone);
   const context = { ...ctx(conversation), provider: providerName };
   conversation = await updateConversation(conversation.id, { context });
-  const lang: "ar" | "en" = resident.language === "en" ? "en" : "ar";
+  let lang: "ar" | "en" = resident.language === "en" ? "en" : "ar";
   const residentActor: Actor = { type: "RESIDENT", name: resident.nameAr ?? resident.name, residentId: resident.id, userId: resident.userId };
 
   // Persist the inbound message
@@ -227,6 +263,14 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
   }
 
   let text = [msg.text, transcript].filter(Boolean).join("\n").trim();
+
+  // Answer in the language the resident writes in; "كلمني عربي" / "English please" switches explicitly
+  const askedLanguage = requestedLanguage(text);
+  const written = askedLanguage ?? writtenLanguage(text);
+  if (written && written !== lang) {
+    lang = written;
+    resident = await db.resident.update({ where: { id: resident.id }, data: { language: lang }, include: residentInclude });
+  }
   const catalog = await getActiveCategoryCatalog().catch(() => undefined);
   const hasMaintenanceVocabulary = (t: string) => hasVocab(t, catalog);
   const reply = async (body: string, ticketId?: string | null) => {
@@ -280,6 +324,28 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
     return body;
   };
 
+  // ── Language switch only ("كلمني عربي") → confirm and repeat whatever we were waiting for
+  if (askedLanguage && isOnlyLanguageRequest(text) && !attachmentIds.length) {
+    const lines = [lang === "ar" ? "تمام 👍 هكلمك بالعربي من دلوقتي." : "Sure 👍 I'll reply in English from now on."];
+    const pendingDup = context.duplicateCheck && conversation.state === "AWAITING_INFO" ? await db.ticket.findUnique({ where: { id: context.duplicateCheck.ticketId } }) : null;
+    if (pendingDup) {
+      await db.ticketMessage.update({ where: { id: inbound.id }, data: { ticketId: pendingDup.id } });
+      await reply(lines[0]);
+      const body = await askSameOrDifferent(await getTicketOrThrow(pendingDup.id));
+      return { action: "language_changed", residentId: resident.id, conversationId: conversation.id, ticketId: pendingDup.id, replies: [lines[0], body] };
+    }
+    if (conversation.state === "AWAITING_INFO" && conversation.activeTicketId) {
+      lines.push(lang === "ar" ? "ممكن توضحلي المشكلة أكتر — إيه اللي عطلان وفين بالظبط في الوحدة؟" : "Could you describe the problem in more detail — what exactly is broken and where in the unit?");
+    } else if (!resident.unitId) {
+      lines.push(await generateReply({ kind: "registration_needed", language: lang, data: { example: (await db.unit.findFirst({ select: { code: true } }))?.code ?? "A01-101" } }));
+    } else {
+      lines.push(lang === "ar" ? "ابعتلي المشكلة بالكلام أو فويس أو صورة وأنا أسجلها فوراً." : "Send me the problem as text, a voice note or a photo and I'll log it right away.");
+    }
+    const body = lines.join("\n");
+    await reply(body, conversation.activeTicketId);
+    return { action: "language_changed", residentId: resident.id, conversationId: conversation.id, replies: [body] };
+  }
+
   // ── 0. Self-registration: we don't know this resident's unit yet
   if (!resident.unitId) {
     const units = await db.unit.findMany({ select: { id: true, code: true } });
@@ -327,6 +393,35 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
       return { action: r.action, residentId: resident.id, conversationId: conversation.id, ticketId: r.ticketId, replies: [r.reply] };
     }
     conversation = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+  }
+
+  // ── 0c. Status query — answered whatever we were waiting for. A pending "same or different?"
+  //        question is dropped: the resident moved on and the open ticket already covers it.
+  if (text && isStatusQuery(text) && !attachmentIds.length) {
+    if (context.duplicateCheck) {
+      await updateConversation(conversation.id, { state: "IDLE", activeTicketId: null, context: { ...context, duplicateCheck: null } });
+      context.duplicateCheck = null;
+    }
+    const numberMatch = text.match(/maint-?(\d+)/i);
+    const tickets = await db.ticket.findMany({
+      where: {
+        residentId: resident.id,
+        ...(numberMatch ? { number: Number(numberMatch[1]) } : { status: { in: OPEN_STATUSES } }),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 3,
+      include: { technician: true, contractor: true },
+    });
+    const replies: string[] = [];
+    if (!tickets.length) {
+      replies.push(await reply(await generateReply({ kind: "no_open_tickets", language: lang, data: {} })));
+    } else {
+      const lines = await Promise.all(
+        tickets.map(async (t) => generateReply({ kind: "status", language: lang, data: statusLine(await getTicketOrThrow(t.id), lang) })),
+      );
+      replies.push(await reply(lines.join("\n\n"), tickets[0].id));
+    }
+    return { action: "status", residentId: resident.id, conversationId: conversation.id, replies };
   }
 
   // ── 0b. Answer to "same problem or a different one?" (open ticket of the same type)
@@ -381,7 +476,7 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
         data: {
           escalated: r.escalated ? 1 : 0,
           priority: PRIORITY_LABELS[r.ticket.priority][lang],
-          action: cat ? (lang === "ar" ? cat.recommendedActionAr : cat.recommendedActionEn.toLowerCase()) : null,
+          action: cat ? (lang === "ar" ? cat.recommendedActionAr : cat.recommendedActionEn) : null,
           ticketNumber: r.ticket.ticketNumber,
           sla: formatMinutesHuman(r.sla.responseMinutes, lang),
           technician: r.ticket.technician ? (lang === "ar" ? r.ticket.technician.nameAr ?? r.ticket.technician.name : r.ticket.technician.name) : null,
@@ -406,30 +501,6 @@ export async function handleInboundMessage(msg: InboundMessage, providerName: st
       return { action: confirmed ? "confirmed" : "reopened", residentId: resident.id, conversationId: conversation.id, ticketId: active.id, ticketNumber: active.ticketNumber, replies: [body] };
     }
     await updateConversation(conversation.id, { state: "IDLE", activeTicketId: null });
-  }
-
-  // ── 3. Status query
-  if (text && isStatusQuery(text) && !attachmentIds.length) {
-    const numberMatch = text.match(/maint-?(\d+)/i);
-    const tickets = await db.ticket.findMany({
-      where: {
-        residentId: resident.id,
-        ...(numberMatch ? { number: Number(numberMatch[1]) } : { status: { in: OPEN_STATUSES } }),
-      },
-      orderBy: { createdAt: "desc" },
-      take: 3,
-      include: { technician: true, contractor: true },
-    });
-    const replies: string[] = [];
-    if (!tickets.length) {
-      replies.push(await reply(await generateReply({ kind: "no_open_tickets", language: lang, data: {} })));
-    } else {
-      const lines = await Promise.all(
-        tickets.map(async (t) => generateReply({ kind: "status", language: lang, data: statusLine(await getTicketOrThrow(t.id), lang) })),
-      );
-      replies.push(await reply(lines.join("\n\n"), tickets[0].id));
-    }
-    return { action: "status", residentId: resident.id, conversationId: conversation.id, replies };
   }
 
   // ── 4. New maintenance request

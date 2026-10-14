@@ -14,7 +14,7 @@ const AR: Record<ResponseKind, Tpl> = {
     `تمام، سجلت طلب صيانة رقم ${d.ticketNumber} ✅\nالمشكلة: ${d.issue}\nالتصنيف: ${d.category}\nالأولوية: ${d.priority}\nوقت الاستجابة المتوقع: خلال ${d.sla}${d.technician ? `\nتم تكليف الفني: ${d.technician}` : ""}`,
   need_info: (d) => `تمام، سجلت طلب صيانة رقم ${d.ticketNumber}. ${d.question}`,
   info_received: (d) =>
-    `${d.escalated ? `تم تصنيف البلاغ كحالة ${d.priority === "طارئ" ? "طارئة" : d.priority} ` : `شكراً على التوضيح. الأولوية: ${d.priority}. `}${d.action ? `وسيتم ${d.action} فوراً.` : ""}\nرقم الطلب: ${d.ticketNumber} — وقت الاستجابة: خلال ${d.sla}${d.technician ? `\nالفني: ${d.technician}` : ""}`,
+    `${d.escalated ? `تم تصنيف البلاغ كحالة ${d.priority === "طارئ" ? "طارئة" : d.priority} ` : `شكراً على التوضيح. الأولوية: ${d.priority}. `}${d.action ? `الخطوة الجاية: ${d.action}.` : ""}\nرقم الطلب: ${d.ticketNumber} — وقت الاستجابة: خلال ${d.sla}${d.technician ? `\nالفني: ${d.technician}` : ""}`,
   status: (d) => `طلب رقم ${d.ticketNumber}: ${d.status}${d.technician ? `\nالفني: ${d.technician}` : ""}${d.eta ? `\nالموعد المستهدف: ${d.eta}` : ""}`,
   no_open_tickets: () => `مفيش طلبات صيانة مفتوحة حالياً على رقمك. لو في مشكلة ابعتهالي وهسجلها فوراً.`,
   not_understood: () => `معلش مقدرتش أفهم المشكلة. ممكن توضحلي إيه اللي عطلان وفين بالظبط في الشقة؟`,
@@ -48,7 +48,7 @@ const EN: Record<ResponseKind, Tpl> = {
     `Done — maintenance request ${d.ticketNumber} is logged ✅\nIssue: ${d.issue}\nCategory: ${d.category}\nPriority: ${d.priority}\nExpected response: within ${d.sla}${d.technician ? `\nAssigned technician: ${d.technician}` : ""}`,
   need_info: (d) => `Logged maintenance request ${d.ticketNumber}. ${d.question}`,
   info_received: (d) =>
-    `${d.escalated ? `This has been classified as ${d.priority}. ` : `Thanks for the details. Priority: ${d.priority}. `}${d.action ? `We will ${d.action} right away.` : ""}\nRequest: ${d.ticketNumber} — response within ${d.sla}${d.technician ? `\nTechnician: ${d.technician}` : ""}`,
+    `${d.escalated ? `This has been classified as ${d.priority}. ` : `Thanks for the details. Priority: ${d.priority}. `}${d.action ? `Next step: ${d.action}.` : ""}\nRequest: ${d.ticketNumber} — response within ${d.sla}${d.technician ? `\nTechnician: ${d.technician}` : ""}`,
   status: (d) => `Request ${d.ticketNumber}: ${d.status}${d.technician ? `\nTechnician: ${d.technician}` : ""}${d.eta ? `\nTarget: ${d.eta}` : ""}`,
   no_open_tickets: () => `You have no open maintenance requests. Send me any problem and I'll log it.`,
   not_understood: () => `Sorry, I couldn't understand the problem. Could you describe what's broken and where exactly in the unit?`,
