@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getConfig } from "@/lib/config";
 import { errorResponse } from "@/server/http/api";
 import { getMockWhatsAppProvider, getWhatsAppProvider } from "@/server/providers/whatsapp";
-import { MetaWhatsAppProvider } from "@/server/providers/whatsapp/meta.provider";
+import { detectPayloadKind, MetaWhatsAppProvider, parseMetaWebhook, verifyMetaChallenge } from "@vixer-house/whatsapp-kit";
 import { handleInboundMessage } from "@/server/services/intake.service";
 
 /**
@@ -15,10 +15,8 @@ import { handleInboundMessage } from "@/server/services/intake.service";
 export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
-  const p = req.nextUrl.searchParams;
-  if (p.get("hub.mode") === "subscribe" && p.get("hub.verify_token") === getConfig().WHATSAPP_VERIFY_TOKEN) {
-    return new NextResponse(p.get("hub.challenge") ?? "", { status: 200 });
-  }
+  const challenge = verifyMetaChallenge(req.nextUrl.searchParams, getConfig().WHATSAPP_VERIFY_TOKEN);
+  if (challenge !== null) return new NextResponse(challenge, { status: 200 });
   return NextResponse.json({ error: { code: "FORBIDDEN", message: "Verification failed" } }, { status: 403 });
 }
 
@@ -28,12 +26,13 @@ export async function POST(req: NextRequest) {
     const payload = raw ? JSON.parse(raw) : {};
     const cfg = getConfig();
 
-    if (payload?.object === "whatsapp_business_account") {
+    if (detectPayloadKind(payload) === "meta") {
       const provider = getWhatsAppProvider();
       if (provider instanceof MetaWhatsAppProvider && !provider.verifySignature(raw, req.headers.get("x-hub-signature-256"))) {
         return NextResponse.json({ error: { code: "FORBIDDEN", message: "Bad signature" } }, { status: 403 });
       }
-      const messages = await (provider instanceof MetaWhatsAppProvider ? provider : new MetaWhatsAppProvider({ token: "", phoneNumberId: "", apiVersion: cfg.WHATSAPP_API_VERSION })).receiveMessage(payload);
+      // Delivery receipts (statuses) are parsed too — not stored yet
+      const { messages } = parseMetaWebhook(payload);
       const results = [];
       for (const m of messages) results.push(await handleInboundMessage(m, provider.name));
       // Always 200 quickly so Meta does not retry

@@ -27,10 +27,8 @@ export interface ConversationContext {
   [k: string]: unknown;
 }
 
-export function normalizePhone(phone: string): string {
-  const digits = phone.replace(/[^\d]/g, "");
-  return `+${digits}`;
-}
+import { normalizePhone } from "@vixer-house/whatsapp-kit";
+export { normalizePhone };
 
 export async function getOrCreateConversation(residentId: string, phone: string): Promise<Conversation> {
   return db.conversation.upsert({
