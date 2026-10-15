@@ -24,6 +24,8 @@ export interface ConversationContext {
   } | null;
   /** A ticket was opened for this resident's unit from an unverified number — waiting for "1" (we know it) / "2" (not us) */
   unitAlert?: { ticketId: string; ticketNumber: string; at: string } | null;
+  /** Resident said "I want to file another complaint" — the next message is a new request, not a comment */
+  expectNewRequest?: boolean | null;
   [k: string]: unknown;
 }
 

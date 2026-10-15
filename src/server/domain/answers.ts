@@ -32,6 +32,17 @@ const DISTINCT = [
   "عطل جديد", "بالاضافه", "مختلفه", "مختلف", "تانيه خالص", "مش نفس", "غير دي", "غير ده",
   "another", "different", "new issue", "new problem", "additional", "second issue", "not the same",
 ];
+/** "عاوز اسجل شكوى تانية", "I want to report a new problem" — asks to open a request without describing it yet. */
+const REQUEST_NOUN = ["شكوي", "شكاوي", "طلب", "بلاغ", "مشكله", "عطل", "complaint", "request", "ticket", "issue", "problem", "report"];
+const NEW_WORD = ["تانيه", "تاني", "جديده", "جديد", "كمان", "اخري", "اخر", "new", "another", "second", "other"];
+const OPEN_VERB = ["اسجل", "نسجل", "سجل", "سجلي", "افتح", "اعمل", "اقدم", "ابلغ", "اشتكي", "file", "open", "log", "register", "submit", "raise", "make"];
+export function wantsNewRequest(text: string): boolean {
+  const n = normalizeArabic(text).toLowerCase();
+  if (n.split(" ").filter(Boolean).length > 10) return false;
+  const has = (list: string[]) => list.some((k) => matchKeyword(n, k));
+  return has(REQUEST_NOUN) && (has(NEW_WORD) || has(OPEN_VERB));
+}
+
 /** Phrases that confirm it's the same problem already reported. */
 const SAME = ["نفس المشكله", "نفسها", "نفس الحاجه", "هي هي", "هيا هيا", "نفس", "ايوه نفس", "same", "same issue", "same problem", "the same"];
 

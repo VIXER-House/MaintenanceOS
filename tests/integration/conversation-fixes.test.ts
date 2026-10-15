@@ -86,4 +86,29 @@ describe.runIf(process.env.DATABASE_URL)("conversation fixes (integration)", () 
     expect([a.action, b.action].filter((x) => x === "duplicate")).toHaveLength(1);
     expect(await db.ticket.count({ where: { resident: { phone } } })).toBe(before + 1);
   });
+
+  it("with an open ticket: “عاوز اسجل شكوى تانية” asks for the problem, and “حريقة” opens an EMERGENCY ticket (not a comment)", async () => {
+    if (!dbUp) return;
+    await db.conversation.updateMany({ where: { resident: { phone } }, data: { state: "IDLE", activeTicketId: null, context: {} } });
+    const open = await db.ticket.count({ where: { resident: { phone }, status: { notIn: ["CANCELLED", "CLOSED", "COMPLETED"] } } });
+    expect(open).toBeGreaterThan(0);
+    const before = await db.ticket.count({ where: { resident: { phone } } });
+
+    const ask = await say("عاوز اسجل شكوي تانية");
+    expect(ask.action).toBe("new_request_prompt");
+    expect(ask.replies[0]).toContain("المشكلة الجديدة");
+
+    const fire = await say("في حريقة في العمارة اللي جمبي");
+    expect(["created", "follow_up_requested"]).toContain(fire.action);
+    const t = await db.ticket.findUniqueOrThrow({ where: { id: fire.ticketId! } });
+    expect(t.priority).toBe("EMERGENCY");
+    expect(await db.ticket.count({ where: { resident: { phone } } })).toBe(before + 1);
+  });
+
+  it("a plain reaction (“شكراً”) on an open ticket is still a comment", async () => {
+    if (!dbUp) return;
+    await db.conversation.updateMany({ where: { resident: { phone } }, data: { state: "IDLE", activeTicketId: null, context: {} } });
+    const r = await say("شكرا");
+    expect(r.action).toBe("comment");
+  });
 });

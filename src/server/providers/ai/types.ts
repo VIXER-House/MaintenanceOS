@@ -86,6 +86,7 @@ export type ResponseKind =
   | "registration_unit_not_found"
   | "registration_done"
   | "comment_received"
+  | "new_request_prompt"
   | "duplicate_found"
   | "duplicate_same"
   | "issue_added"

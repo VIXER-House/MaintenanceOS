@@ -17,7 +17,7 @@ import { hasMaintenanceVocabulary as hasVocab } from "@/server/providers/ai/mock
 import { getActiveCategoryCatalog } from "./category-catalog.service";
 import { findStaffByPhone, handleStaffMessage, parseStaffReply, sendStaffWhatsApp } from "./staff-whatsapp.service";
 import { alertUnitOfUnverifiedTicket, handleUnitAlertReply, isPhoneBlocked, registerBlockedAttempt } from "./fake-report.service";
-import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue } from "@/server/domain/answers";
+import { isDifferentIssueAnswer, isSameIssueAnswer, mentionsDistinctIssue, wantsNewRequest } from "@/server/domain/answers";
 import { evaluatePriority } from "@/server/engines/priority/priority-engine";
 import { findUnitInText, guessUnitAttempt } from "@/server/domain/unit-codes";
 import { getGlobalPriorityRules } from "./settings.service";
@@ -61,7 +61,8 @@ export type IntakeAction =
   | "staff"
   | "duplicate_check"
   | "duplicate_same"
-  | "issue_added";
+  | "issue_added"
+  | "new_request_prompt";
 
 export interface IntakeResult {
   action: IntakeAction;
@@ -104,6 +105,10 @@ function writtenLanguage(text: string): "ar" | "en" | null {
   if (detectLanguage(text) === "ar") return "ar";
   const words = text.replace(/maint-?\d+/gi, " ").match(/[a-z]{2,}/gi) ?? [];
   return words.length >= 2 ? "en" : null;
+}
+/** Fire, gas, sparks, flooding, people trapped — any global EMERGENCY rule matches the text. */
+async function isEmergencyText(text: string) {
+  return evaluatePriority({ text, globalRules: await getGlobalPriorityRules() }).priority === "EMERGENCY";
 }
 /** "كلمني عربي", "English please" — nothing else in the message */
 function isOnlyLanguageRequest(text: string) {
@@ -503,6 +508,20 @@ async function processInbound(msg: InboundMessage, providerName: string, opts: {
     await updateConversation(conversation.id, { state: "IDLE", activeTicketId: null });
   }
 
+  // ── 3b. "عاوز اسجل شكوى تانية" — they want a new request but haven't described it yet → ask for it
+  const emergency = !!text && (await isEmergencyText(text));
+  if (text && !attachmentIds.length && !emergency && wantsNewRequest(text) && !hasMaintenanceVocabulary(text)) {
+    await updateConversation(conversation.id, { state: "IDLE", activeTicketId: null, context: { ...context, expectNewRequest: true } });
+    const body = await generateReply({ kind: "new_request_prompt", language: lang, data: {} });
+    await reply(body);
+    return { action: "new_request_prompt", residentId: resident.id, conversationId: conversation.id, replies: [body] };
+  }
+  const expectingNew = !!context.expectNewRequest || wantsNewRequest(text);
+  if (context.expectNewRequest) {
+    await updateConversation(conversation.id, { context: { ...context, expectNewRequest: null } });
+    context.expectNewRequest = null;
+  }
+
   // ── 4. New maintenance request
   const requestText = text || imageFindings.map((f) => f.issue).join(", ");
   const knownAssets = await db.asset.findMany({
@@ -515,10 +534,14 @@ async function processInbound(msg: InboundMessage, providerName: string, opts: {
     imageFindings: imageFindings.map((f) => ({ issue: f.issue, categoryKey: f.categoryKey, confidence: f.confidence })),
     knownAssets,
   });
+  // Fire / gas / sparks / trapped people are always a request — never a comment, never "not maintenance"
+  if (emergency && !outcome.classification.isMaintenanceRequest) {
+    outcome.classification = { ...outcome.classification, isMaintenanceRequest: true, priority: "EMERGENCY", needsMoreInfo: false, followUpQuestion: null };
+  }
 
   // ── 4a. A reaction to an open request ("ساعتين؟!", "لسه محدش جه", "شكراً") is a comment on
   //        that ticket, not a new request: no maintenance vocabulary + nothing the AI could classify.
-  if (text && !attachmentIds.length && !hasMaintenanceVocabulary(text)) {
+  if (text && !attachmentIds.length && !emergency && !expectingNew && !hasMaintenanceVocabulary(text)) {
     const c = outcome.classification;
     const vague = !c.isMaintenanceRequest || c.category === "OTHER" || c.confidence < 0.6;
     const recent = vague
@@ -549,7 +572,7 @@ async function processInbound(msg: InboundMessage, providerName: string, opts: {
         }).priority === "EMERGENCY";
       const issue = lang === "ar" ? c.issueAr ?? c.issue : c.issue;
       // Clearly another problem ("مشكلة تانية…") or an emergency → add it right away; otherwise ask
-      if (mentionsDistinctIssue(requestText) || urgent) {
+      if (mentionsDistinctIssue(requestText) || urgent || expectingNew) {
         return addIssue(existing.id, { text: requestText, issue, aiPriority: c.priority, aiConfidence: c.confidence, attachmentIds, messageId: inbound.id });
       }
       await updateConversation(conversation.id, {
