@@ -25,7 +25,11 @@ const ConfigSchema = z.object({
   AI_GENERATE_REPLIES: bool,
   OLLAMA_BASE_URL: z.string().default("http://localhost:11434"),
 
-  WHATSAPP_PROVIDER: z.enum(["mock", "meta", "twilio", "bridge"]).catch("mock").default("mock"),
+  WHATSAPP_PROVIDER: z.enum(["mock", "meta", "twilio", "bridge", "wasla"]).catch("mock").default("mock"),
+  /** Wasla platform (our WhatsApp + AI API): site URL, a live API key, and the webhook signing secret */
+  WASLA_API_URL: z.string().url().optional().or(z.literal("").transform(() => undefined)),
+  WASLA_API_KEY: z.string().optional(),
+  WASLA_WEBHOOK_SECRET: z.string().optional(),
   /** Shared secret between the app and the PC WhatsApp bridge (whatsapp-bridge/) */
   WHATSAPP_BRIDGE_SECRET: z.string().optional(),
   /** Public URL of the cloud bridge (e.g. https://mos-bridge.onrender.com) — lets the app wake it so updates go out instantly */

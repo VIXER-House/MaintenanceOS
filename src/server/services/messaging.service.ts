@@ -60,7 +60,8 @@ export async function updateConversation(
 /** Residents who wrote via the simulator are answered by the mock provider; real numbers via the configured provider. */
 function providerFor(conversation: Conversation): WhatsAppProvider {
   const p = ctx(conversation).provider;
-  return p && p !== "mock" && p === getWhatsAppProvider().name ? getWhatsAppProvider() : getMockWhatsAppProvider();
+  // Real numbers always use the configured provider — even if they first wrote through an older one (e.g. bridge → wasla)
+  return p && p !== "mock" ? getWhatsAppProvider() : getMockWhatsAppProvider();
 }
 
 /**

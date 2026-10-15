@@ -1,5 +1,6 @@
 import { createWhatsAppProvider, MockWhatsAppProvider, type ProviderConfig, type WhatsAppProvider } from "@vixer-house/whatsapp-kit";
 import { getConfig } from "@/lib/config";
+import { WaslaWhatsAppProvider } from "./wasla.provider";
 
 export * from "./types";
 
@@ -25,6 +26,11 @@ function providerConfigFromEnv(): ProviderConfig | null {
 
 export function getWhatsAppProvider(): WhatsAppProvider {
   if (instance) return instance;
+  const c = getConfig();
+  if (c.WHATSAPP_PROVIDER === "wasla" && c.WASLA_API_URL && c.WASLA_API_KEY) {
+    instance = new WaslaWhatsAppProvider({ apiUrl: c.WASLA_API_URL, apiKey: c.WASLA_API_KEY, webhookSecret: c.WASLA_WEBHOOK_SECRET });
+    return instance;
+  }
   const cfg = providerConfigFromEnv();
   instance = cfg ? createWhatsAppProvider(cfg) : mock;
   return instance;

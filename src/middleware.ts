@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/session";
 
-/** Public endpoints: login, health, and the WhatsApp webhook (Meta must reach it). */
-const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/whatsapp/webhook", "/api/whatsapp/twilio", "/api/whatsapp/bridge"];
+/** Public endpoints: login, health, and the WhatsApp webhooks (Meta / Twilio / bridge / Wasla must reach them; each checks its own signature). */
+const PUBLIC = ["/login", "/api/auth/login", "/api/health", "/api/whatsapp/webhook", "/api/whatsapp/twilio", "/api/whatsapp/bridge", "/api/whatsapp/wasla"];
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
