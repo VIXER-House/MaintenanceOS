@@ -49,9 +49,13 @@ export async function geminiGenerate(model: string, apiKey: string, body: unknow
       body: JSON.stringify(body),
     });
   const effective = replacement.get(model) ?? model;
+  const started = Date.now();
   try {
-    return await call(effective);
+    const res = await call(effective);
+    console.log(`[gemini] ${effective} answered in ${Date.now() - started}ms`);
+    return res;
   } catch (e) {
+    console.warn(`[gemini] ${effective} failed after ${Date.now() - started}ms: ${(e as Error).message.slice(0, 200)}`);
     if (!isModelMissing(e)) throw e;
     const next = await findCurrentFlashModel(apiKey).catch(() => null);
     if (!next || next === effective) throw e;

@@ -28,8 +28,10 @@ export async function POST(req: NextRequest) {
   const messages = await provider.receiveMessage(payload);
   after(async () => {
     for (const m of messages) {
+      const started = Date.now();
       try {
-        await handleInboundMessage(m, provider.name);
+        const r = await handleInboundMessage(m, provider.name);
+        console.log(`[wasla] message from ${m.from} handled in ${Date.now() - started}ms → ${r.action}${r.ticketNumber ? ` ${r.ticketNumber}` : ""}`);
       } catch (e) {
         console.error("[wasla] inbound failed", e);
       }
